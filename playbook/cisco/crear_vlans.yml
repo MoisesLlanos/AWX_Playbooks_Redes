@@ -1,0 +1,85 @@
+---
+- name: Crear VLANs en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+
+  tasks:
+    - name: Verificar variable vlans_config
+      ansible.builtin.assert:
+        that:
+          - vlans_config is defined
+          - vlans_config | length > 0
+        fail_msg: "Debes proporcionar la variable vlans_config."
+
+    - name: Validar cada VLAN
+      ansible.builtin.assert:
+        that:
+          - item.vlan_id is defined
+          - item.vlan_id | int >= 2
+          - item.vlan_id | int <= 4094
+          - item.name is defined
+          - item.name | length >= 1
+          - item.name | length <= 32
+        fail_msg: "Configuración incorrecta para la VLAN {{ item }}."
+      loop: "{{ vlans_config }}"
+      loop_control:
+        label: "VLAN {{ item.vlan_id | default('desconocida') }}"
+
+    - name: Consultar lista de VLANs actuales
+      community.ciscosmb.command:
+        commands:
+          - show vlan
+      register: vlans_actuales
+      changed_when: false
+
+    - name: Crear VLANs que no existen
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "interface vlan {{ item.vlan_id }}"
+          - "name {{ item.name }}"
+          - end
+      loop: "{{ vlans_config }}"
+      loop_control:
+        label: "VLAN {{ item.vlan_id }} - {{ item.name }}"
+      when: >-
+        (item.vlan_id | string) not in
+        (vlans_actuales.stdout[0] | default('')).split()
+      changed_when: true
+
+    - name: Consultar lista de VLANs despues de los cambios
+      community.ciscosmb.command:
+        commands:
+          - show vlan
+      register: vlans_finales
+      changed_when: false
+
+    - name: Verificar cada VLAN configurada
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.vlan_id | string) in
+            (vlans_finales.stdout[0] | default('')).split()
+        fail_msg: >-
+          La VLAN {{ item.vlan_id }} no aparece despues de configurarla.
+        success_msg: "VLAN {{ item.vlan_id }} verificada."
+      loop: "{{ vlans_config }}"
+      loop_control:
+        label: "VLAN {{ item.vlan_id }}"
+
+#    - name: Guardar configuración
+#      community.ciscosmb.command:
+#        commands:
+#          - write memory
+
+
+
+# vlans_config:
+#   - vlan_id: 57
+#     name: CICLISTAS
+
+#   - vlan_id: 70
+#     name: VOZ
+
+#   - vlan_id: 99
+#     name: ADMINISTRACION

@@ -1,0 +1,167 @@
+---
+# Orden: bridge/VLANs, RSTP, troncales y finalmente puertos de acceso.
+# Valida todos los datos y puertos antes de modificar RouterOS.
+# Los bridge ports nuevos quedan deshabilitados hasta completar perfil y VLANs.
+- name: Configurar puertos troncales con perfiles
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  vars_files:
+    - vars/trunk_profiles.yml
+
+  tasks:
+    - name: Crear bridge port troncal deshabilitado cuando no existe
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local port {{ item.port | community.routeros.quote_argument_value }};
+            :if ([:len [/interface bridge port find where interface=$port]] = 0) do={
+            /interface bridge port add bridge=$br interface=$port disabled=yes;
+            :put "PUERTO_CREADO"; };
+            :put "CREACION_OK"; }
+      register: puertos_creados
+      failed_when: '''CREACION_OK'' not in (puertos_creados.stdout | default(['''']))[0].splitlines()'
+      changed_when: '''PUERTO_CREADO'' in (puertos_creados.stdout | default(['''']))[0].splitlines()'
+      loop: '{{ trunk_ports_config }}'
+      loop_control:
+        label: '{{ item.port }}'
+
+    - name: Aplicar perfil STP al troncal
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            :if (([/interface bridge port get $bp edge] != "{{ perfil.portfast | ternary('yes', 'no') }}") or
+            ([/interface bridge port get $bp bpdu-guard] != {{ perfil.bpdu_guard | ternary('true', 'false') }})) do={
+            /interface bridge port set $bp edge={{ perfil.portfast | ternary('yes', 'no') }}
+            bpdu-guard={{ perfil.bpdu_guard | ternary('yes', 'no') }};
+            :put "STP_CAMBIADO"; };
+            :put "STP_OK"; }
+      register: resultado_stp
+      failed_when: '''STP_OK'' not in (resultado_stp.stdout | default(['''']))[0].splitlines()'
+      changed_when: '''STP_CAMBIADO'' in (resultado_stp.stdout | default(['''']))[0].splitlines()'
+      loop: '{{ trunk_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> {{ item.profile }}'
+      vars:
+        perfil: '{{ trunk_profiles[item.profile] }}'
+
+    - name: Aplicar filtrado y tipo de trama al troncal
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            :local frame "{{ perfil.frame_types }}";
+            :if (([/interface bridge port get $bp ingress-filtering] != {{ perfil.ingress_filtering | ternary('true', 'false') }}) or
+            ([/interface bridge port get $bp frame-types] != $frame)) do={
+            /interface bridge port set $bp ingress-filtering={{ perfil.ingress_filtering | ternary('yes', 'no') }}
+            frame-types={{ perfil.frame_types | community.routeros.quote_argument_value }};
+            :put "FILTRADO_CAMBIADO"; };
+            :put "FILTRADO_OK"; }
+      register: resultado_filtrado
+      failed_when: '''FILTRADO_OK'' not in (resultado_filtrado.stdout | default(['''']))[0].splitlines()'
+      changed_when: '''FILTRADO_CAMBIADO'' in (resultado_filtrado.stdout | default(['''']))[0].splitlines()'
+      loop: '{{ trunk_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> {{ item.profile }}'
+      vars:
+        perfil: '{{ trunk_profiles[item.profile] }}'
+
+    - name: Aplicar confianza DHCP al troncal
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            :if ([/interface bridge port get $bp trusted] != {{ perfil.dhcp_trusted | ternary('true', 'false') }}) do={
+            /interface bridge port set $bp trusted={{ perfil.dhcp_trusted | ternary('yes', 'no') }};
+            :put "DHCP_TRUST_CAMBIADO"; };
+            :put "DHCP_TRUST_OK"; }
+      register: resultado_dhcp_trust
+      failed_when: '''DHCP_TRUST_OK'' not in (resultado_dhcp_trust.stdout | default(['''']))[0].splitlines()'
+      changed_when: '''DHCP_TRUST_CAMBIADO'' in (resultado_dhcp_trust.stdout | default(['''']))[0].splitlines()'
+      loop: '{{ trunk_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> trusted={{ perfil.dhcp_trusted }}'
+      vars:
+        perfil: '{{ trunk_profiles[item.profile] }}'
+
+    - name: Agregar troncal como tagged en cada VLAN
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.0.port | community.routeros.quote_argument_value }};
+            :local row [/interface bridge vlan find where
+            bridge={{ bridge_name | community.routeros.quote_argument_value }}
+            and vlan-ids={{ item.1 | int }} and dynamic=no];
+            :local updated ""; :local found false;
+            :foreach member in=[/interface bridge vlan get $row tagged] do={
+            :if ($member = $port) do={ :set found true; };
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            :set updated ($updated . $member); };
+            :if (!$found) do={
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            /interface bridge vlan set $row tagged=($updated . $port);
+            :put "MEMBRESIA_CAMBIADA"; };
+            :put "MEMBRESIA_OK"; }
+      register: resultado_membresia
+      failed_when: '''MEMBRESIA_OK'' not in (resultado_membresia.stdout | default(['''']))[0].splitlines()'
+      changed_when: '''MEMBRESIA_CAMBIADA'' in (resultado_membresia.stdout | default(['''']))[0].splitlines()'
+      loop: "{{ trunk_ports_config | subelements('vlan_ids') }}"
+      loop_control:
+        label: '{{ item.0.port }} -> VLAN {{ item.1 }}'
+
+    - name: Habilitar DHCP snooping en el bridge
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local bid [/interface bridge find where name=$br];
+            :if ([/interface bridge get $bid dhcp-snooping] = false) do={
+            /interface bridge set $bid dhcp-snooping=yes;
+            :put "DHCP_SNOOPING_CAMBIADO"; };
+            :if ([/interface bridge get $bid dhcp-snooping] = false) do={
+            :error "No se pudo habilitar DHCP snooping"; };
+            :put "DHCP_SNOOPING_OK"; }
+      register: resultado_dhcp_snooping
+      failed_when: '''DHCP_SNOOPING_OK'' not in (resultado_dhcp_snooping.stdout | default(['''']))[0].splitlines()'
+      changed_when: '''DHCP_SNOOPING_CAMBIADO'' in (resultado_dhcp_snooping.stdout | default(['''']))[0].splitlines()'
+
+    - name: Habilitar bridge ports creados por esta ejecucion
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            /interface bridge port set $bp disabled=no;
+            :if ([/interface bridge port get $bp disabled]) do={
+            :error "No se pudo habilitar el bridge port"; };
+            :put "PUERTO_HABILITADO"; }
+      register: resultado_habilitacion
+      failed_when: '''PUERTO_HABILITADO'' not in (resultado_habilitacion.stdout | default(['''']))[0].splitlines()'
+      changed_when: true
+      loop: '{{ puertos_creados.results }}'
+      when: item.changed | bool
+      loop_control:
+        label: '{{ item.item.port }}'
+
+# VARIABLES EN AWX (ejemplo):
+# bridge_name: BRtrunk
+# management_port: ether1
+# trunk_ports_config:
+#   - port: ether2
+#     profile: hacia_switch
+#     vlan_ids:
+#       - 10
+#       - 20
+#   - port: ether3
+#     profile: hacia_ap
+#     vlan_ids:
+#       - 10
+#       - 20

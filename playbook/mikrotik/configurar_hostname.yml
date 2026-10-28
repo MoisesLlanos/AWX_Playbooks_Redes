@@ -1,0 +1,49 @@
+---
+- name: Configurar hostname del MikroTik
+  hosts: EquiposMikrotik
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Validar el nombre solicitado
+      assert:
+        that:
+          - host_name is defined
+          - host_name | default('') is string
+          - (host_name | default('')) is match('^[A-Za-z0-9][A-Za-z0-9-]{0,62}$')
+        fail_msg: >-
+          Define host_name con entre 1 y 63 caracteres.
+          Usa letras, números y guiones, comenzando por letra o número.
+
+    - name: Consultar el nombre actual
+      community.routeros.command:
+        commands:
+          - ':put [/system identity get name]'
+      register: identidad_actual
+      changed_when: false
+
+    - name: Cambiar nombre si es diferente
+      community.routeros.command:
+        commands:
+          - '/system identity set name="{{ host_name }}"'
+      when: (identidad_actual.stdout[0] | trim) != host_name
+      changed_when: true
+
+    - name: Consultar el nombre final
+      community.routeros.command:
+        commands:
+          - ':put [/system identity get name]'
+      register: identidad_final
+      changed_when: false
+
+    - name: Verificar el nombre configurado
+      assert:
+        that:
+          - (identidad_final.stdout[0] | trim) == host_name
+        success_msg: "Hostname configurado correctamente: {{ host_name }}"
+        fail_msg: "El nombre final no coincide con el solicitado."
+
+
+        ######  VARIABLES EN AWX  #######
+
+# host_name: SW-BLOQUE-A-01

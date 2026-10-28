@@ -1,0 +1,15 @@
+vault_pass.txt
+*.vault_pass
+backups/
+*.retry
+*.swp
+*~
+.ansible/
+__pycache__/
+
+# firmware: no entra al repo, pesa 20 MB y se descarga desde el equipo
+*.npk
+iso_mikrotiks/
+
+# inventario local de pruebas; el inventario real vive en AWX
+inventario/hosts.ini

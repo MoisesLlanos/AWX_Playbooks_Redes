@@ -1,0 +1,37 @@
+---
+# Backup general. Una sola plantilla de AWX para programar periodicamente.
+#
+# Se importan los dos fabricantes y cada play esta restringido a su grupo, asi
+# que SIN limit respalda todo el inventario: los MikroTik y los Cisco.
+# Con limit = un equipo, respalda solo ese.
+#
+# Un equipo caido no detiene a los demas: Ansible lo saca de su play y sigue
+# con el resto. El job si queda marcado como fallido, que es lo que interesa
+# para que el fallo se note en un trabajo programado.
+#
+# Los archivos van a /backups/<equipo>/<fecha>.rsc en MikroTik y .cfg en Cisco,
+# dentro del contenedor, que es el bind mount del host.
+
+- import_playbook: mikrotik/backup.yml
+- import_playbook: cisco/backup.yml
+
+
+######  COMO PROGRAMARLO EN AWX  #######
+
+# 1. Plantilla nueva, tipo Run, playbook: playbook/backup.yml
+#
+# 2. IMPORTANTE: asignarle el inventario "Equipos de red" y DESMARCAR
+#    "Preguntar al iniciar" en ese campo. Un trabajo programado no puede
+#    responder preguntas, asi que una plantilla sin inventario fijo falla al
+#    ejecutarse por horario. Hoy ninguna plantilla del sistema tiene inventario
+#    asignado: todas lo piden al lanzar.
+#
+# 3. No poner limite: el limite vacio significa todo el inventario.
+#
+# 4. Credenciales: hacen falta las de los dos fabricantes a la vez, porque el
+#    job cubre MikroTik y Cisco en la misma ejecucion.
+#
+# 5. Anadir un Calendario (Schedule) a la plantilla con la periodicidad
+#    deseada, por ejemplo diario a las 02:00.
+#
+# No necesita variables. Opcionales: backup_dir, backup_no_log.

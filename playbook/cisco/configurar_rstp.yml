@@ -1,0 +1,44 @@
+---
+- name: Activar RSTP en Cisco SF300
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Abrir conexión (reintenta si el switch rechaza)
+      community.ciscosmb.command:
+        commands:
+          - show version
+      register: conexion
+      until: conexion is succeeded
+      retries: 5
+      delay: 10
+      
+    - name: Activar Spanning Tree en modo RSTP
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - spanning-tree
+          - spanning-tree mode rstp
+          - end
+
+    - name: Consultar estado de Spanning Tree
+      community.ciscosmb.command:
+        commands:
+          - show spanning-tree
+      register: rstp_result
+      changed_when: false
+
+    - name: Mostrar estado de RSTP
+      ansible.builtin.debug:
+        var: rstp_result.stdout
+
+#    - name: Guardar configuración
+#      community.ciscosmb.command:
+#        commands:
+#          - write memory
+
+
+######  VARIABLES EN AWX  #######
+
+# NO NECESITA VARIABLES

@@ -1,0 +1,477 @@
+---
+# Orden: bridge/VLANs, RSTP, troncales y finalmente puertos de acceso.
+# Carga los perfiles desde vars/port_profiles.yml.
+# Cada operacion RouterOS se ejecuta y verifica por separado.
+# Los bridge ports nuevos permanecen deshabilitados hasta completar su perfil y VLAN.
+# Storm control se omite sin error cuando el modelo o el puerto no ofrece un backend compatible.
+- name: Configurar puertos de acceso con perfiles
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  vars_files:
+    - vars/port_profiles.yml
+
+  pre_tasks:
+    - name: Obtener modelo y version de RouterOS
+      community.routeros.facts:
+        gather_subset:
+          - '!config'
+
+    - name: Clasificar familia del equipo
+      ansible.builtin.set_fact:
+        storm_modelo_objetivo: >-
+          {{ (ansible_net_model | default('') | upper) is match('^(CCR|CRS)') }}
+        storm_modelo_crs_legacy: >-
+          {{ (ansible_net_model | default('') | upper) is match('^CRS[12][0-9]') }}
+        storm_rate_ports: []
+        storm_policer_ports: []
+
+    - name: Seleccionar policer para CRS1xx y CRS2xx
+      ansible.builtin.set_fact:
+        storm_policer_ports: >-
+          {{ access_ports_config | map(attribute='port') | list }}
+      when:
+        - storm_modelo_objetivo | bool
+        - storm_modelo_crs_legacy | bool
+
+    - name: Detectar storm-rate por puerto en CCR y CRS modernos
+      community.routeros.command:
+        commands:
+          - >-
+            /interface ethernet switch port print detail where
+            name={{ item.port | community.routeros.quote_argument_value }}
+      register: deteccion_storm_rate
+      failed_when: false
+      changed_when: false
+      loop: '{{ access_ports_config }}'
+      when:
+        - storm_modelo_objetivo | bool
+        - not (storm_modelo_crs_legacy | bool)
+      loop_control:
+        label: '{{ item.port }}'
+
+    - name: Registrar puertos compatibles con storm-rate
+      ansible.builtin.set_fact:
+        storm_rate_ports: '{{ storm_rate_ports + [item.item.port] }}'
+      loop: '{{ deteccion_storm_rate.results | default([]) }}'
+      when:
+        - not (item.skipped | default(false) | bool)
+        - "'storm-rate' in (item.stdout | default([]) | join(' '))"
+      loop_control:
+        label: '{{ item.item.port | default("omitido") }}'
+
+    - name: Informar modelo y backend de storm control
+      ansible.builtin.debug:
+        msg: >-
+          Modelo={{ ansible_net_model | default('desconocido') }},
+          RouterOS={{ ansible_net_version | default('desconocido') }},
+          puerto={{ item.port }}, backend={{
+          'ingress-port-policer' if item.port in storm_policer_ports else
+          'storm-rate' if item.port in storm_rate_ports else
+          'omitido (modelo o puerto sin soporte detectado)' }}.
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }}'
+
+  tasks:
+    - name: Habilitar VLAN filtering en el bridge
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local bid [/interface bridge find where name=$br];
+            :if ([/interface bridge get $bid vlan-filtering] = false) do={
+            /interface bridge set $bid vlan-filtering=yes;
+            :put "VLAN_FILTERING_CAMBIADO"; };
+            :if ([/interface bridge get $bid vlan-filtering] = false) do={
+            :error "No se pudo habilitar vlan-filtering"; };
+            :put "VLAN_FILTERING_OK"; }
+      register: resultado_vlan_filtering
+      failed_when: >-
+        'VLAN_FILTERING_OK' not in
+        (resultado_vlan_filtering.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'VLAN_FILTERING_CAMBIADO' in
+        (resultado_vlan_filtering.stdout | default(['']))[0].splitlines()
+
+    - name: Crear bridge port de acceso deshabilitado cuando no existe
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local port {{ item.port | community.routeros.quote_argument_value }};
+            :if ([:len [/interface bridge port find where interface=$port]] = 0) do={
+            /interface bridge port add bridge=$br interface=$port disabled=yes;
+            :put "PUERTO_CREADO"; };
+            :put "CREACION_OK"; }
+      register: puertos_creados
+      failed_when: >-
+        'CREACION_OK' not in
+        (puertos_creados.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'PUERTO_CREADO' in
+        (puertos_creados.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }}'
+
+    - name: Aplicar perfil STP al acceso
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            :if (([/interface bridge port get $bp edge] != "{{ perfil.portfast | ternary('yes', 'no') }}") or
+            ([/interface bridge port get $bp bpdu-guard] != {{ perfil.bpdu_guard | ternary('true', 'false') }})) do={
+            /interface bridge port set $bp edge={{ perfil.portfast | ternary('yes', 'no') }}
+            bpdu-guard={{ perfil.bpdu_guard | ternary('yes', 'no') }};
+            :put "STP_CAMBIADO"; };
+            :put "STP_OK"; }
+      register: resultado_stp
+      failed_when: >-
+        'STP_OK' not in
+        (resultado_stp.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STP_CAMBIADO' in
+        (resultado_stp.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> {{ item.profile }}'
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Aplicar filtrado y tipo de trama al acceso
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            :local frame "{{ perfil.frame_types }}";
+            :if (([/interface bridge port get $bp ingress-filtering] != {{ perfil.ingress_filtering | ternary('true', 'false') }}) or
+            ([/interface bridge port get $bp frame-types] != $frame)) do={
+            /interface bridge port set $bp ingress-filtering={{ perfil.ingress_filtering | ternary('yes', 'no') }}
+            frame-types={{ perfil.frame_types | community.routeros.quote_argument_value }};
+            :put "FILTRADO_CAMBIADO"; };
+            :put "FILTRADO_OK"; }
+      register: resultado_filtrado
+      failed_when: >-
+        'FILTRADO_OK' not in
+        (resultado_filtrado.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'FILTRADO_CAMBIADO' in
+        (resultado_filtrado.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> {{ item.profile }}'
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Aplicar confianza DHCP al acceso
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            :if ([/interface bridge port get $bp trusted] != {{ perfil.dhcp_trusted | ternary('true', 'false') }}) do={
+            /interface bridge port set $bp trusted={{ perfil.dhcp_trusted | ternary('yes', 'no') }};
+            :put "DHCP_TRUST_CAMBIADO"; };
+            :put "DHCP_TRUST_OK"; }
+      register: resultado_dhcp_trust
+      failed_when: >-
+        'DHCP_TRUST_OK' not in
+        (resultado_dhcp_trust.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'DHCP_TRUST_CAMBIADO' in
+        (resultado_dhcp_trust.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> trusted={{ perfil.dhcp_trusted }}'
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Aplicar PVID al acceso
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local vid {{ item.vlan_id | int }};
+            :local bp [/interface bridge port find where interface=$port];
+            :if ([/interface bridge port get $bp pvid] != $vid) do={
+            /interface bridge port set $bp pvid=$vid;
+            :put "PVID_CAMBIADO"; };
+            :put "PVID_OK"; }
+      register: resultado_pvid
+      failed_when: >-
+        'PVID_OK' not in
+        (resultado_pvid.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'PVID_CAMBIADO' in
+        (resultado_pvid.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> VLAN {{ item.vlan_id }}'
+
+    - name: Aplicar porcentaje de storm control al acceso
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local storm {{ perfil.broadcast_storm_control.enabled |
+            ternary(perfil.broadcast_storm_control.percent, 100) }};
+            :local sp [/interface ethernet switch port find where name=$port];
+            :if ([/interface ethernet switch port get $sp storm-rate] != $storm) do={
+            /interface ethernet switch port set $sp storm-rate=$storm;
+            :put "STORM_RATE_CAMBIADO"; };
+            :put "STORM_RATE_OK"; }
+      register: resultado_storm_rate
+      failed_when: >-
+        'STORM_RATE_OK' not in
+        (resultado_storm_rate.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STORM_RATE_CAMBIADO' in
+        (resultado_storm_rate.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      when: item.port in storm_rate_ports
+      loop_control:
+        label: >-
+          {{ item.port }} -> {{ perfil.broadcast_storm_control.enabled |
+          ternary(perfil.broadcast_storm_control.percent, 100) }}%
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Aplicar selectores de storm control al acceso
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local sp [/interface ethernet switch port find where name=$port];
+            :if (([/interface ethernet switch port get $sp limit-broadcasts] = false) or
+            ([/interface ethernet switch port get $sp limit-unknown-unicasts]) or
+            ([/interface ethernet switch port get $sp limit-unknown-multicasts])) do={
+            /interface ethernet switch port set $sp limit-broadcasts=yes
+            limit-unknown-unicasts=no limit-unknown-multicasts=no;
+            :put "STORM_SELECTORES_CAMBIADOS"; };
+            :put "STORM_SELECTORES_OK"; }
+      register: resultado_storm_selectores
+      failed_when: >-
+        'STORM_SELECTORES_OK' not in
+        (resultado_storm_selectores.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STORM_SELECTORES_CAMBIADOS' in
+        (resultado_storm_selectores.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      when: item.port in storm_rate_ports
+      loop_control:
+        label: '{{ item.port }}'
+
+    - name: Crear policer broadcast cuando no existe
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local rate {{ perfil.broadcast_storm_control.packets_per_second | int }};
+            :local rule [/interface ethernet switch ingress-port-policer find where
+            port=$port and packet-types=broadcast];
+            :if ([:len $rule] = 0) do={
+            /interface ethernet switch ingress-port-policer add port=$port
+            rate=$rate meter-unit=packet packet-types=broadcast;
+            :put "STORM_POLICER_CREADO"; };
+            :put "STORM_POLICER_CREACION_OK"; }
+      register: creacion_storm_policer
+      failed_when: >-
+        'STORM_POLICER_CREACION_OK' not in
+        (creacion_storm_policer.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STORM_POLICER_CREADO' in
+        (creacion_storm_policer.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      when:
+        - item.port in storm_policer_ports
+        - perfil.broadcast_storm_control.enabled | bool
+      loop_control:
+        label: '{{ item.port }}'
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Aplicar tasa del policer broadcast
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local rate {{ perfil.broadcast_storm_control.packets_per_second | int }};
+            :local unit "packet";
+            :local rule [/interface ethernet switch ingress-port-policer find where
+            port=$port and packet-types=broadcast];
+            :if (([/interface ethernet switch ingress-port-policer get $rule rate] != $rate) or
+            ([/interface ethernet switch ingress-port-policer get $rule meter-unit] != $unit)) do={
+            /interface ethernet switch ingress-port-policer set $rule rate=$rate
+            meter-unit=packet packet-types=broadcast;
+            :put "STORM_POLICER_CAMBIADO"; };
+            :put "STORM_POLICER_OK"; }
+      register: resultado_storm_policer
+      failed_when: >-
+        'STORM_POLICER_OK' not in
+        (resultado_storm_policer.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STORM_POLICER_CAMBIADO' in
+        (resultado_storm_policer.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      when:
+        - item.port in storm_policer_ports
+        - perfil.broadcast_storm_control.enabled | bool
+      loop_control:
+        label: >-
+          {{ item.port }} ->
+          {{ perfil.broadcast_storm_control.packets_per_second }} pps
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Habilitar policer broadcast
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local rule [/interface ethernet switch ingress-port-policer find where
+            port=$port and packet-types=broadcast];
+            :if ([/interface ethernet switch ingress-port-policer get $rule disabled]) do={
+            /interface ethernet switch ingress-port-policer set $rule disabled=no;
+            :put "STORM_POLICER_HABILITADO"; };
+            :put "STORM_POLICER_HABILITACION_OK"; }
+      register: habilitacion_storm_policer
+      failed_when: >-
+        'STORM_POLICER_HABILITACION_OK' not in
+        (habilitacion_storm_policer.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STORM_POLICER_HABILITADO' in
+        (habilitacion_storm_policer.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      when:
+        - item.port in storm_policer_ports
+        - perfil.broadcast_storm_control.enabled | bool
+      loop_control:
+        label: '{{ item.port }}'
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Desactivar policer de broadcast cuando el perfil lo deshabilita
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local rule [/interface ethernet switch ingress-port-policer find where
+            port=$port and packet-types=broadcast];
+            :if ([:len $rule] > 1) do={
+            :error "Existe mas de un policer broadcast para el puerto"; };
+            :if (([:len $rule] = 1) and
+            ([/interface ethernet switch ingress-port-policer get $rule disabled] = false)) do={
+            /interface ethernet switch ingress-port-policer set $rule disabled=yes;
+            :put "STORM_POLICER_CAMBIADO"; };
+            :put "STORM_POLICER_OK"; }
+      register: resultado_storm_policer_desactivado
+      failed_when: >-
+        'STORM_POLICER_OK' not in
+        (resultado_storm_policer_desactivado.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'STORM_POLICER_CAMBIADO' in
+        (resultado_storm_policer_desactivado.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      when:
+        - item.port in storm_policer_ports
+        - not (perfil.broadcast_storm_control.enabled | bool)
+      loop_control:
+        label: '{{ item.port }} -> policer desactivado'
+      vars:
+        perfil: '{{ port_profiles[item.profile] }}'
+
+    - name: Retirar acceso de otras VLAN untagged
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local vid {{ item.vlan_id | int }};
+            :local target [/interface bridge vlan find where bridge=$br
+            and vlan-ids=$vid and dynamic=no];
+            :foreach row in=[/interface bridge vlan find where bridge=$br and dynamic=no] do={
+            :if ($row != $target) do={ :local updated ""; :local found false;
+            :foreach member in=[/interface bridge vlan get $row untagged] do={
+            :if ($member = $port) do={ :set found true; } else={
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            :set updated ($updated . $member); }; };
+            :if ($found) do={ /interface bridge vlan set $row untagged=$updated;
+            :put "MEMBRESIA_RETIRADA"; }; }; };
+            :put "LIMPIEZA_OK"; }
+      register: resultado_limpieza
+      failed_when: >-
+        'LIMPIEZA_OK' not in
+        (resultado_limpieza.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'MEMBRESIA_RETIRADA' in
+        (resultado_limpieza.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> VLAN {{ item.vlan_id }}'
+
+    - name: Agregar acceso como untagged en su VLAN
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local port {{ item.port | community.routeros.quote_argument_value }};
+            :local vid {{ item.vlan_id | int }};
+            :local row [/interface bridge vlan find where bridge=$br
+            and vlan-ids=$vid and dynamic=no];
+            :local updated ""; :local found false;
+            :foreach member in=[/interface bridge vlan get $row untagged] do={
+            :if ($member = $port) do={ :set found true; };
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            :set updated ($updated . $member); };
+            :if (!$found) do={
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            /interface bridge vlan set $row untagged=($updated . $port);
+            :put "MEMBRESIA_CAMBIADA"; };
+            :put "MEMBRESIA_OK"; }
+      register: resultado_membresia
+      failed_when: >-
+        'MEMBRESIA_OK' not in
+        (resultado_membresia.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'MEMBRESIA_CAMBIADA' in
+        (resultado_membresia.stdout | default(['']))[0].splitlines()
+      loop: '{{ access_ports_config }}'
+      loop_control:
+        label: '{{ item.port }} -> VLAN {{ item.vlan_id }}'
+
+    - name: Habilitar bridge ports creados por esta ejecucion
+      community.routeros.command:
+        commands:
+          - >-
+            { :local port {{ item.item.port | community.routeros.quote_argument_value }};
+            :local bp [/interface bridge port find where interface=$port];
+            /interface bridge port set $bp disabled=no;
+            :if ([/interface bridge port get $bp disabled]) do={
+            :error "No se pudo habilitar el bridge port"; };
+            :put "PUERTO_HABILITADO"; }
+      register: resultado_habilitacion
+      failed_when: >-
+        'PUERTO_HABILITADO' not in
+        (resultado_habilitacion.stdout | default(['']))[0].splitlines()
+      changed_when: true
+      loop: '{{ puertos_creados.results }}'
+      when: item.changed | bool
+      loop_control:
+        label: '{{ item.item.port }}'
+
+# VARIABLES EN AWX (ejemplo):
+# bridge_name: BRtrunk
+# management_port: ether1
+# access_ports_config:
+#   - port: ether2
+#     vlan_id: 10
+#     profile: usuario
+#   - port: ether3
+#     vlan_id: 20
+#     profile: impresora

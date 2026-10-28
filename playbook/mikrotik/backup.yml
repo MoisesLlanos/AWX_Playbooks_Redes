@@ -1,0 +1,92 @@
+---
+# Guarda el /export de cada MikroTik en /backups/<equipo>/<fecha>.rsc
+#
+# /backups es un bind mount del host montado en los contenedores de AWX.
+# El "delegate_to: localhost" es obligatorio: sin el, Ansible intentaria
+# escribir el archivo en el MikroTik. Y "localhost" aqui no es la laptop, es
+# el contenedor awx_task, que es donde esta montado /backups.
+#
+# /export oculta los secretos por defecto, asi que el archivo NO lleva
+# contrasenas ni claves. Por eso se deja legible (0644). Si algun dia se cambia
+# a "/export show-sensitive", hay que endurecer los permisos a 0600 y la
+# carpeta a 0700.
+- name: Backup de configuracion de MikroTik
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+
+  vars:
+    backup_dir: /backups
+
+  pre_tasks:
+    - name: Validar el directorio de backups
+      ansible.builtin.assert:
+        that:
+          - backup_dir is defined
+          - backup_dir | trim | length > 0
+        fail_msg: >-
+          Define backup_dir. Por defecto es /backups, que es el bind mount
+          de AWX.
+
+    # Se fija una sola vez para que todos los archivos de esta ejecucion
+    # lleven la misma marca de tiempo.
+    - name: Fijar la fecha de esta ejecucion
+      ansible.builtin.set_fact:
+        fecha: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+  tasks:
+    - name: Exportar la configuracion del equipo
+      community.routeros.command:
+        commands:
+          - /export
+      register: exportacion
+      changed_when: false
+
+    - name: Comprobar que el export trajo contenido
+      ansible.builtin.assert:
+        that:
+          - exportacion.stdout is defined
+          - (exportacion.stdout[0] | default('') | trim | length) > 0
+        fail_msg: >-
+          El /export de {{ inventory_hostname }} vino vacio.
+          No se escribe ningun archivo para no sobrescribir un backup bueno.
+
+    # copy no crea los directorios padre, de ahi que haga falta esta tarea.
+    - name: Crear el directorio del equipo
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+
+    - name: Guardar el export con fecha
+      ansible.builtin.copy:
+        content: "{{ exportacion.stdout[0] }}\n"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ fecha }}.rsc"
+        mode: "0644"
+      delegate_to: localhost
+
+    # Copia de nombre fijo, para comparar contra la anterior con un diff.
+    - name: Actualizar ultimo.rsc
+      ansible.builtin.copy:
+        content: "{{ exportacion.stdout[0] }}\n"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/ultimo.rsc"
+        mode: "0644"
+      delegate_to: localhost
+
+    - name: Mostrar donde quedo el backup
+      ansible.builtin.debug:
+        msg: >-
+          {{ backup_dir }}/{{ inventory_hostname }}/{{ fecha }}.rsc
+          ({{ exportacion.stdout[0] | length }} caracteres)
+
+
+# ============================================================
+# VARIABLES EN AWX
+# ============================================================
+#
+# No necesita ninguna. Opcional:
+# backup_dir: /backups    # cambiar solo si se monta otra ruta
+#
+# Pendiente, decidido para despues: rotacion de backups antiguos.
+# Este playbook no borra nada, asi que la carpeta crece sin limite.

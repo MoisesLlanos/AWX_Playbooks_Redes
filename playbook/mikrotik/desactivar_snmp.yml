@@ -1,0 +1,100 @@
+---
+# Quita la IP del panel de trap-target, conservando las demas: el equipo deja
+# de enviarle traps.
+#
+# NO borra la comunidad. RouterOS se niega con "can not remove default
+# community", porque configurar_snmp_traps.yml la deja referenciada en
+# /snmp trap-community y eso la marca como default.
+# Decision tomada: dejarla. Consecuencia: el panel conserva acceso de LECTURA
+# SNMP al equipo, solo deja de recibir traps.
+#
+# NO toca /snmp enabled ni trap-community, porque el equipo puede estar siendo
+# monitoreado por otro servidor.
+- name: Retirar el destino de traps del panel en MikroTik
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+
+  pre_tasks:
+    - name: Validar variables de SNMP
+      ansible.builtin.assert:
+        that:
+          - snmp_comunidad is defined
+          - snmp_comunidad is string
+          - snmp_comunidad | trim | length > 0
+          - snmp_trap_destino is defined
+          - snmp_trap_destino is string
+          - snmp_trap_destino | trim | length > 0
+        fail_msg: >-
+          Define snmp_comunidad y snmp_trap_destino en AWX.
+
+  tasks:
+    - name: Quitar la IP del panel de trap-target y conservar las demas
+      community.routeros.command:
+        commands:
+          - >-
+            { :local ip {{ snmp_trap_destino | trim | community.routeros.quote_argument_value }};
+            :local updated ""; :local found false;
+            :foreach t in=[/snmp get trap-target] do={
+            :if ([:tostr $t] = $ip) do={ :set found true; } else={
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            :set updated ($updated . [:tostr $t]); }; };
+            :if ($found) do={ /snmp set trap-target=$updated;
+            :put "TRAP_CAMBIADO"; };
+            :put "TRAP_OK"; }
+      register: resultado_trap
+      failed_when: >-
+        'TRAP_OK' not in
+        (resultado_trap.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'TRAP_CAMBIADO' in
+        (resultado_trap.stdout | default(['']))[0].splitlines()
+
+    - name: Consultar estado final de SNMP
+      community.routeros.command:
+        commands:
+          - >-
+            :put [:len [/snmp community find where
+            name={{ snmp_comunidad | trim | community.routeros.quote_argument_value }}]]
+          - ':put [/snmp get trap-target]'
+          - ':put [/snmp get enabled]'
+      register: estado_final
+      changed_when: false
+      no_log: "{{ snmp_no_log | default(true) | bool }}"
+
+    - name: Verificar que el panel ya no recibe traps
+      ansible.builtin.assert:
+        that:
+          - >-
+            (snmp_trap_destino | trim) not in
+            ((estado_final.stdout[1] | default('')).split(',') | map('trim') | list)
+        fail_msg: >-
+          El destino de traps del panel sigue configurado en el equipo.
+        success_msg: >-
+          El equipo ya no envia traps al panel.
+
+    - name: Mostrar estado de SNMP que queda en el equipo
+      ansible.builtin.debug:
+        msg: >-
+          SNMP habilitado={{ estado_final.stdout[2] | trim }},
+          trap-target restantes={{ estado_final.stdout[1] | trim | default('ninguno', true) }}.
+          La comunidad del panel NO se borra y
+          {{ 'sigue configurada' if (estado_final.stdout[0] | trim | int) > 0
+             else 'no esta configurada' }}:
+          el panel conserva acceso de lectura SNMP.
+
+
+# ============================================================
+# VARIABLES EN AWX
+# ============================================================
+#
+# snmp_comunidad: la misma que creo configurar_snmp.yml. Aqui solo se usa para
+#                 informar si sigue existiendo; este playbook NO la borra.
+# snmp_trap_destino: 192.168.1.10   # IP del panel
+#
+# Opcional para depurar:
+# snmp_no_log: false   # destapa la salida; deja la comunidad en el log del job
+#
+# No apaga SNMP ni borra la comunidad: solo deja de enviar traps al panel.
+# trap-community se deja intacto porque en RouterOS es un valor global unico
+# y lo pueden estar usando otros servidores.

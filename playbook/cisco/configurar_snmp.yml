@@ -1,0 +1,103 @@
+---
+- name: Configurar SNMPv2c en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Validar variables SNMP
+      ansible.builtin.assert:
+        that:
+          - snmp_comunidad is defined
+          - snmp_comunidad | trim | length > 0
+          - snmp_comunidad | trim | length <= 20
+          - snmp_origen_permitido is defined
+          - snmp_origen_permitido | trim | length > 0
+          - "'/' not in (snmp_origen_permitido | trim)"
+        fail_msg: >-
+          Define snmp_comunidad y snmp_origen_permitido en AWX.
+          La comunidad puede tener como máximo 20 caracteres y el origen
+          debe ser una sola dirección IP, sin /32.
+
+    - name: Consultar estado SNMP actual
+      community.ciscosmb.command:
+        commands:
+          - show snmp
+      register: snmp_actual
+      changed_when: false
+      no_log: true
+
+    - name: Activar servidor SNMP
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - snmp-server server
+          - end
+      when: "'SNMP is enabled' not in snmp_actual.stdout[0]"
+
+    - name: Configurar comunidad SNMPv2c de solo lectura
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - >-
+            snmp-server community {{ snmp_comunidad | trim }} ro
+            {{ snmp_origen_permitido | trim }}
+          - end
+      when: >-
+        (snmp_comunidad | trim) not in snmp_actual.stdout[0]
+        or (snmp_origen_permitido | trim) not in snmp_actual.stdout[0]
+      no_log: true
+
+    - name: Configurar contacto SNMP
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "snmp-server contact {{ snmp_contacto | trim }}"
+          - end
+      when:
+        - snmp_contacto is defined
+        - snmp_contacto | trim | length > 0
+        - snmp_contacto | trim not in snmp_actual.stdout[0]
+
+    - name: Configurar ubicación SNMP
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "snmp-server location {{ snmp_ubicacion | trim }}"
+          - end
+      when:
+        - snmp_ubicacion is defined
+        - snmp_ubicacion | trim | length > 0
+        - snmp_ubicacion | trim not in snmp_actual.stdout[0]
+
+    - name: Verificar configuración SNMP
+      community.ciscosmb.command:
+        commands:
+          - show snmp
+      register: snmp_final
+      changed_when: false
+      no_log: true
+
+    - name: Confirmar comunidad y origen permitidos
+      ansible.builtin.assert:
+        that:
+          - snmp_comunidad | trim in snmp_final.stdout[0]
+          - snmp_origen_permitido | trim in snmp_final.stdout[0]
+        fail_msg: >-
+          SNMP no quedó configurado con la comunidad y el origen indicados.
+        success_msg: >-
+          SNMPv2c quedó activo y limitado al origen permitido.
+
+    # - name: Guardar configuración
+    #   community.ciscosmb.command:
+    #     commands:
+    #       - write memory
+
+
+
+######  VARIABLES EN AWX  #######
+
+# snmp_comunidad: valor-secreto
+# snmp_origen_permitido: 192.168.99.20
+# snmp_contacto: soporte@empresa.example  # Opcional
+# snmp_ubicacion: Sucursal principal      # Opcional

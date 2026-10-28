@@ -1,0 +1,224 @@
+---
+- name: Configurar puertos access en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+
+  vars_files:
+    - vars/port_profiles.yml
+
+  vars:
+    # Algunos comandos (smartport, port security) pueden tardar en el SF
+    ansible_command_timeout: 120
+
+  tasks:
+    - name: Verificar variable access_ports
+      ansible.builtin.assert:
+        that:
+          - access_ports is defined
+          - access_ports | length > 0
+        fail_msg: "Debes proporcionar la variable access_ports."
+
+    - name: Validar puertos y perfiles
+      ansible.builtin.assert:
+        that:
+          - item.interface is defined
+          - item.profile is defined
+          - item.profile | default('') in port_profiles
+          - >-
+            not (port_profiles[item.profile].enabled | default(true) | bool)
+            or item.vlan_id is defined
+          - >-
+            item.interface is match(
+              '(?i)^(fa|gi|fastethernet|gigabitethernet)\d+(/\d+/\d+)?$'
+            )
+        fail_msg: >-
+          Configuración incorrecta para
+          {{ item.interface | default('interfaz desconocida') }}.
+          Revisa que el perfil exista y que la interfaz tenga el formato
+          fa1, gi1 o gi1/0/1.
+      loop: "{{ access_ports }}"
+      loop_control:
+        label: "{{ item.interface | default('interfaz desconocida') }}"
+
+    # El SF300 tira el primer canal SSH del job. El until/retries de las tareas
+    # no lo recupera porque reintenta sobre el mismo socket roto, asi que el
+    # canal malo se quema aqui, con un comando que no configura nada.
+    - name: Abrir el canal SSH antes de configurar
+      block:
+        - name: Comprobar que el CLI responde
+          community.ciscosmb.command:
+            commands:
+              - show version
+          changed_when: false
+      rescue:
+        - name: Cerrar el canal roto
+          ansible.builtin.meta: reset_connection
+
+        - name: Esperar antes de reintentar
+          ansible.builtin.pause:
+            seconds: 5
+
+        - name: Reintentar con un canal nuevo
+          community.ciscosmb.command:
+            commands:
+              - show version
+          changed_when: false
+
+    - name: Configurar modo access y VLAN
+      community.ciscosmb.command:
+        commands:
+          - end
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - no macro auto smartport
+          - no spanning-tree disable
+          - "description {{ item.description | default('PUERTO_ACCESS') }}"
+          - switchport mode access
+          - "switchport access vlan {{ item.vlan_id }}"
+          - >-
+            {{ 'ip dhcp snooping trust'
+               if (perfil.dhcp_trusted | default(false) | bool)
+               else 'no ip dhcp snooping trust' }}
+          - no shutdown
+          - exit
+          - end
+      loop: "{{ access_ports }}"
+      register: r_access
+      until: r_access is succeeded
+      retries: 2
+      delay: 5
+      loop_control:
+        label: >-
+          {{ item.interface }} -> VLAN {{ item.vlan_id | default('sin VLAN') }}
+      vars:
+        perfil: "{{ port_profiles[item.profile] }}"
+      when: perfil.enabled | default(true) | bool
+
+    - name: Desactivar puertos sin uso
+      community.ciscosmb.command:
+        commands:
+          - end
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - "description {{ item.description | default('PUERTO_DESACTIVADO') }}"
+          - shutdown
+          - exit
+          - end
+      loop: "{{ access_ports }}"
+      loop_control:
+        label: "{{ item.interface }} -> desactivado"
+      when: >-
+        not (port_profiles[item.profile].enabled | default(true) | bool)
+
+    - name: Activar PortFast
+      community.ciscosmb.command:
+        commands:
+          - end
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - spanning-tree portfast
+          - exit
+          - end
+      loop: "{{ access_ports }}"
+      when: port_profiles[item.profile].portfast | default(false) | bool
+      loop_control:
+        label: "{{ item.interface }} -> PortFast"
+
+    - name: Activar BPDU Guard
+      community.ciscosmb.command:
+        commands:
+          - end
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - spanning-tree bpduguard enable
+          - exit
+          - end
+      loop: "{{ access_ports }}"
+      when: port_profiles[item.profile].bpdu_guard | default(false) | bool
+      loop_control:
+        label: "{{ item.interface }} -> BPDU Guard"
+
+    - name: Configurar Port Security
+      community.ciscosmb.command:
+        commands:
+          - end
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - "port security max {{ port_profiles[item.profile].max_mac }}"
+          - port security mode max-addresses
+          - "port security {{ port_profiles[item.profile].security_action | default('discard') }} trap {{ port_profiles[item.profile].trap_interval | default(60) }}"
+          - exit
+          - end
+      loop: "{{ access_ports }}"
+      when:
+        - port_profiles[item.profile].port_security | default(false) | bool
+        - port_profiles[item.profile].max_mac is defined
+      loop_control:
+        # La etiqueta NO usa claves del perfil: se evalúa aunque la tarea se omita
+        label: "{{ item.interface }} -> Port Security"
+
+    - name: Configurar Storm Control
+      community.ciscosmb.command:
+        commands:
+          - end
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - "storm-control broadcast level {{ port_profiles[item.profile].storm_level }}"
+#          - storm-control broadcast enable
+          - exit
+          - end
+      loop: "{{ access_ports }}"
+      when:
+        - port_profiles[item.profile].storm_control | default(false) | bool
+        - port_profiles[item.profile].storm_level is defined
+      loop_control:
+        label: "{{ item.interface }} -> Storm Control"
+
+    - name: Verificar puertos access
+      community.ciscosmb.command:
+        commands:
+          - "show interfaces switchport {{ item.interface }}"
+      loop: "{{ access_ports }}"
+      register: access_result
+      changed_when: false
+      loop_control:
+        label: "{{ item.interface }}"
+
+    - name: Mostrar verificación
+      ansible.builtin.debug:
+        msg: "{{ item.stdout_lines[0] }}"
+      loop: "{{ access_result.results }}"
+      loop_control:
+        label: "{{ item.item.interface }}"
+
+#    - name: Guardar configuración
+#      community.ciscosmb.command:
+#        commands:
+#          - write memory
+
+
+
+######  VARIABLES EN AWX  #######
+
+# access_ports:
+#   - interface: fa9
+#     description: PC_CONTABILIDAD
+#     vlan_id: 57
+#     profile: usuario
+
+#   - interface: fa10
+#     description: IMPRESORA_CONTABILIDAD
+#     vlan_id: 57
+#     profile: impresora
+
+#   - interface: fa11
+#     description: SERVIDOR_LOCAL
+#     vlan_id: 99
+#     profile: servidor
+
+#   - interface: fa12
+#     description: PUERTO_SIN_USO
+#     profile: desactivado
+
+# En CBS usar el nombre mostrado por "show interfaces configuration",
+# por ejemplo gi1/0/1 cuando corresponda.

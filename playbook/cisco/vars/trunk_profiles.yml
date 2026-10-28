@@ -1,0 +1,11 @@
+---
+trunk_profiles:
+  hacia_switch:
+    portfast: false
+    bpdu_guard: false
+    dhcp_trusted: true
+
+  hacia_ap:
+    portfast: true
+    bpdu_guard: true
+    dhcp_trusted: false

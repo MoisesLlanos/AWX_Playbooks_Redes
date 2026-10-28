@@ -1,0 +1,142 @@
+---
+# Orden recomendado:
+# bridge/VLANs, RSTP, troncales, accesos e IP de administracion.
+# La IP se asigna directamente al bridge. No se crea una interfaz VLAN.
+# El puerto management_port permanece fuera del bridge y no se modifica.
+- name: Configurar IP de administracion directamente en el bridge
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  vars:
+    management_ip_comment: AWX_BRIDGE_MANAGEMENT
+
+  tasks:
+    - name: Retirar bridge de tagged en la VLAN de administracion
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local vid {{ bridge_management.vlan_id | int }};
+            :local row [/interface bridge vlan find where bridge=$br
+            and vlan-ids=$vid and dynamic=no];
+            :local updated ""; :local found false;
+            :foreach member in=[/interface bridge vlan get $row tagged] do={
+            :if ($member = $br) do={ :set found true; } else={
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            :set updated ($updated . $member); }; };
+            :if ($found) do={
+            /interface bridge vlan set $row tagged=$updated;
+            :put "TAGGED_CAMBIADO"; };
+            :put "TAGGED_OK"; }
+      register: retiro_tagged
+      failed_when: >-
+        'TAGGED_OK' not in
+        (retiro_tagged.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'TAGGED_CAMBIADO' in
+        (retiro_tagged.stdout | default(['']))[0].splitlines()
+
+    - name: Agregar bridge como untagged en la VLAN de administracion
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local vid {{ bridge_management.vlan_id | int }};
+            :local row [/interface bridge vlan find where bridge=$br
+            and vlan-ids=$vid and dynamic=no];
+            :local updated ""; :local found false;
+            :foreach member in=[/interface bridge vlan get $row untagged] do={
+            :if ($member = $br) do={ :set found true; };
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            :set updated ($updated . $member); };
+            :if (!$found) do={
+            :if ([:len $updated] > 0) do={ :set updated ($updated . ","); };
+            /interface bridge vlan set $row untagged=($updated . $br);
+            :put "UNTAGGED_CAMBIADO"; };
+            :put "UNTAGGED_OK"; }
+      register: asignacion_untagged
+      failed_when: >-
+        'UNTAGGED_OK' not in
+        (asignacion_untagged.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'UNTAGGED_CAMBIADO' in
+        (asignacion_untagged.stdout | default(['']))[0].splitlines()
+
+    - name: Aplicar PVID de administracion al bridge
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local vid {{ bridge_management.vlan_id | int }};
+            :local bid [/interface bridge find where name=$br];
+            :if ([/interface bridge get $bid pvid] != $vid) do={
+            /interface bridge set $bid pvid=$vid;
+            :put "PVID_CAMBIADO"; };
+            :put "PVID_OK"; }
+      register: resultado_pvid
+      failed_when: >-
+        'PVID_OK' not in
+        (resultado_pvid.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'PVID_CAMBIADO' in
+        (resultado_pvid.stdout | default(['']))[0].splitlines()
+
+    - name: Crear o adoptar IP de administracion
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local addr {{ bridge_management.ipv4_address |
+            community.routeros.quote_argument_value }};
+            :local marker {{ management_ip_comment |
+            community.routeros.quote_argument_value }};
+            :local managed [/ip address find where comment=$marker and dynamic=no];
+            :local exact [/ip address find where address=$addr and dynamic=no];
+            :if ([:len $managed] = 0) do={
+            :if ([:len $exact] = 1) do={
+            /ip address set $exact interface=$br disabled=no comment=$marker;
+            } else={ /ip address add address=$addr interface=$br comment=$marker; };
+            :put "IP_CREADA"; };
+            :put "IP_CREACION_OK"; }
+      register: creacion_ip
+      failed_when: >-
+        'IP_CREACION_OK' not in
+        (creacion_ip.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'IP_CREADA' in
+        (creacion_ip.stdout | default(['']))[0].splitlines()
+
+    - name: Aplicar direccion e interfaz a la IP administrada
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local addr {{ bridge_management.ipv4_address |
+            community.routeros.quote_argument_value }};
+            :local marker {{ management_ip_comment |
+            community.routeros.quote_argument_value }};
+            :local managed [/ip address find where comment=$marker and dynamic=no];
+            :if (([/ip address get $managed address] != $addr) or
+            ([/ip address get $managed interface] != $br) or
+            ([/ip address get $managed disabled])) do={
+            /ip address set $managed address=$addr interface=$br
+            disabled=no comment=$marker;
+            :put "IP_CAMBIADA"; };
+            :put "IP_OK"; }
+      register: resultado_ip
+      failed_when: >-
+        'IP_OK' not in
+        (resultado_ip.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'IP_CAMBIADA' in
+        (resultado_ip.stdout | default(['']))[0].splitlines()
+
+# VARIABLES EN AWX (usar una IP distinta por equipo):
+# bridge_name: BRtrunk
+# management_port: ether1
+# bridge_management:
+#   ipv4_address: 192.168.99.13/24
+#   vlan_id: 99

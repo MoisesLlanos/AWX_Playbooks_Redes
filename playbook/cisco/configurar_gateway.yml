@@ -1,0 +1,63 @@
+---
+- name: Configurar gateway predeterminado en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Validar gateway
+      ansible.builtin.assert:
+        that:
+          - gateway_ip is defined
+          - gateway_ip | trim | length > 0
+        fail_msg: >-
+          Debes proporcionar la variable gateway_ip
+          con la dirección del gateway de administración.
+
+    - name: Consultar gateway actual
+      community.ciscosmb.command:
+        commands:
+          - show ip interface
+      register: gateway_actual
+      changed_when: false
+
+    - name: Configurar gateway predeterminado
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "ip default-gateway {{ gateway_ip | trim }}"
+          - end
+      when: >-
+        (gateway_ip | trim) not in gateway_actual.stdout[0]
+
+    - name: Consultar gateway después de configurarlo
+      community.ciscosmb.command:
+        commands:
+          - show ip interface
+      register: gateway_final
+      changed_when: false
+
+    - name: Mostrar estado IP del switch
+      ansible.builtin.debug:
+        var: gateway_final.stdout_lines
+
+    - name: Verificar gateway predeterminado
+      ansible.builtin.assert:
+        that:
+          - (gateway_ip | trim) in gateway_final.stdout[0]
+        fail_msg: >-
+          No se encontró el gateway {{ gateway_ip }}
+          en la configuración del switch.
+        success_msg: >-
+          Gateway {{ gateway_ip }} configurado correctamente.
+
+    # - name: Guardar configuración
+    #   community.ciscosmb.command:
+    #     commands:
+    #       - write memory
+
+
+
+######  VARIABLES EN AWX  #######
+
+# gateway_ip: 192.168.1.1

@@ -1,0 +1,61 @@
+---
+port_profiles:
+  usuario:
+    enabled: true
+    portfast: true
+    bpdu_guard: true
+    dhcp_trusted: false
+    port_security: true
+    max_mac: 1
+    security_action: discard
+    trap_interval: 60
+    storm_control: true
+    storm_level: 1
+
+  impresora:
+    enabled: true
+    portfast: true
+    bpdu_guard: true
+    dhcp_trusted: false
+    port_security: true
+    max_mac: 1
+    security_action: discard
+    trap_interval: 60
+    storm_control: true
+    storm_level: 1
+
+  camara:
+    enabled: true
+    portfast: true
+    bpdu_guard: true
+    dhcp_trusted: false
+    port_security: true
+    max_mac: 1
+    security_action: discard
+    trap_interval: 60
+    storm_control: true
+    storm_level: 1
+
+  telefono:
+    enabled: true
+    portfast: true
+    bpdu_guard: true
+    dhcp_trusted: false
+    port_security: true
+    max_mac: 1
+    security_action: discard
+    trap_interval: 60
+    storm_control: true
+    storm_level: 1
+
+  servidor:
+    enabled: true
+    portfast: true
+    bpdu_guard: true
+    dhcp_trusted: false
+    port_security: false
+    storm_control: true
+    storm_level: 1
+
+  desactivado:
+    enabled: false

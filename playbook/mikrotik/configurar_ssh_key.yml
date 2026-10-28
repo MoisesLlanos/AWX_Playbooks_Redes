@@ -1,0 +1,242 @@
+---
+- name: Crear usuario dedicado para AWX e instalar su clave publica
+  hosts: EquiposMikrotik
+  gather_facts: false
+
+  # Variables extra:
+  #   clave_publica   (obligatoria)  "ssh-ed25519 AAAA... awx"
+  #   nuevo_usuario   (opcional)     por defecto: awx
+  #   grupo_usuario   (opcional)     por defecto: full
+
+  vars:
+    nuevo_usuario: awx
+    grupo_usuario: full
+
+  pre_tasks:
+    - name: Validar usuario de conexion
+      ansible.builtin.assert:
+        that:
+          - ansible_user | default('') | trim | length > 0
+        fail_msg: "Selecciona una credencial Machine con usuario en AWX."
+
+    - name: Validar clave publica recibida
+      ansible.builtin.assert:
+        that:
+          - clave_publica | default('') | trim | length > 0
+        fail_msg: "Debes proporcionar clave_publica en las Variables extra de AWX."
+
+    - name: Validar nombre del usuario nuevo
+      ansible.builtin.assert:
+        that:
+          - nuevo_usuario is match('^[A-Za-z0-9_.-]+$')
+          - grupo_usuario is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "nuevo_usuario y grupo_usuario solo admiten letras, numeros, punto, guion y guion bajo."
+
+  tasks:
+    # ---------------------------------------------------------------
+    # 1. Identificador SHA256 estable de la clave recibida
+    # ---------------------------------------------------------------
+    - name: Calcular un identificador SHA256 para la clave recibida
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import base64
+            import hashlib
+            import struct
+            import sys
+
+            key = sys.stdin.read().strip()
+
+            if len(key.splitlines()) != 1:
+                sys.exit("La clave debe ocupar una sola linea.")
+
+            parts = key.split()
+            if len(parts) < 2:
+                sys.exit("La clave debe estar en formato OpenSSH.")
+
+            try:
+                raw = base64.b64decode(parts[1], validate=True)
+            except ValueError:
+                sys.exit("El contenido Base64 de la clave no es valido.")
+
+            if len(raw) < 4:
+                sys.exit("La estructura de la clave no es valida.")
+
+            size = struct.unpack(">I", raw[:4])[0]
+            if size == 0 or len(raw) < 4 + size:
+                sys.exit("La estructura de la clave no es valida.")
+
+            if raw[4:4 + size] != parts[0].encode():
+                sys.exit("El tipo indicado no coincide con el contenido de la clave.")
+
+            digest = hashlib.sha256(raw).hexdigest()
+            print("AWX-" + digest)
+        stdin: "{{ clave_publica | trim }}"
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+      register: identificador_clave
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # 2. Crear el usuario si no existe
+    # ---------------------------------------------------------------
+    - name: Comprobar si el usuario nuevo ya existe
+      community.routeros.command:
+        commands:
+          - ":put [:len [/user find where name={{ nuevo_usuario | community.routeros.quote_argument_value }}]]"
+      register: usuario_check
+      changed_when: false
+
+    - name: Determinar si el usuario existe
+      ansible.builtin.set_fact:
+        usuario_existe: "{{ (usuario_check.stdout[0] | trim | int) > 0 }}"
+
+    - name: Generar contraseña aleatoria (nadie la usara; el acceso es solo por clave)
+      ansible.builtin.set_fact:
+        pass_aleatoria: "{{ lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits') }}"
+      when: not usuario_existe
+      no_log: true
+
+    - name: Crear el usuario {{ nuevo_usuario }}
+      community.routeros.command:
+        commands:
+          - >-
+            /user add
+            name={{ nuevo_usuario | community.routeros.quote_argument_value }}
+            group={{ grupo_usuario | community.routeros.quote_argument_value }}
+            password={{ pass_aleatoria | community.routeros.quote_argument_value }}
+            comment="Creado por AWX"
+      when: not usuario_existe
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # 3. Instalar la clave solo si falta
+    # ---------------------------------------------------------------
+    - name: Consultar las claves del usuario nuevo
+      community.routeros.command:
+        commands:
+          - >-
+            /user ssh-keys print detail where
+            user={{ nuevo_usuario | community.routeros.quote_argument_value }}
+      register: claves_existentes
+      changed_when: false
+
+    - name: Guardar el identificador de la clave
+      ansible.builtin.set_fact:
+        identificador_clave_actual: "{{ identificador_clave.stdout | trim }}"
+
+    - name: Determinar si la clave ya existe
+      ansible.builtin.set_fact:
+        clave_ya_instalada: "{{ identificador_clave_actual in claves_existentes.stdout[0] }}"
+
+    - name: Instalar la clave publica en el usuario nuevo
+      when: not (clave_ya_instalada | bool)
+      block:
+        - name: Crear archivo temporal para la clave publica
+          ansible.builtin.tempfile:
+            state: file
+            prefix: awx_routeros_ssh_
+            suffix: .pub
+          register: archivo_clave_temporal
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+          changed_when: false
+
+        - name: Escribir la clave publica en el archivo temporal
+          ansible.builtin.copy:
+            content: "{{ (clave_publica | trim).split()[:2] | join(' ') }} {{ identificador_clave_actual }}\n"
+            dest: "{{ archivo_clave_temporal.path }}"
+            mode: "0600"
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+          changed_when: false
+
+        - name: Subir la clave publica al MikroTik mediante SFTP
+          ansible.netcommon.net_put:
+            src: "{{ archivo_clave_temporal.path }}"
+            dest: "/{{ archivo_clave_temporal.path | basename }}"
+            protocol: sftp
+            mode: binary
+
+        - name: Importar la clave publica en RouterOS
+          community.routeros.command:
+            commands:
+              - >-
+                /user ssh-keys import
+                public-key-file={{ (archivo_clave_temporal.path | basename) | community.routeros.quote_argument_value }}
+                user={{ nuevo_usuario | community.routeros.quote_argument_value }}
+      always:
+        - name: Eliminar el archivo temporal del MikroTik
+          community.routeros.command:
+            commands:
+              - >-
+                :local f [/file find where
+                name={{ (archivo_clave_temporal.path | basename) | community.routeros.quote_argument_value }}];
+                :if ([:len $f] > 0) do={ /file remove $f }
+          when:
+            - archivo_clave_temporal is defined
+            - archivo_clave_temporal.path is defined
+          changed_when: false
+
+        - name: Eliminar el archivo temporal del entorno de ejecucion
+          ansible.builtin.file:
+            path: "{{ archivo_clave_temporal.path }}"
+            state: absent
+          when:
+            - archivo_clave_temporal is defined
+            - archivo_clave_temporal.path is defined
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+          changed_when: false
+
+    # ---------------------------------------------------------------
+    # 4. Verificacion
+    # ---------------------------------------------------------------
+    - name: Verificar las claves despues de la operacion
+      community.routeros.command:
+        commands:
+          - >-
+            /user ssh-keys print detail where
+            user={{ nuevo_usuario | community.routeros.quote_argument_value }}
+      register: claves_finales
+      changed_when: false
+      failed_when: identificador_clave_actual not in claves_finales.stdout[0]
+
+    - name: Mostrar resultado
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          usuario {{ nuevo_usuario }}
+          {{ 'ya existia' if usuario_existe | bool else 'creado' }},
+          clave
+          {{ 'ya estaba instalada' if clave_ya_instalada | bool else 'instalada y verificada' }}.
+
+
+######  VARIABLES EN AWX  #######
+# Variables del inventario:
+#   ansible_connection: ansible.netcommon.network_cli
+#   ansible_network_os: community.routeros.routeros
+#
+# Variables extra o encuesta:
+#   clave_publica: "ssh-ed25519 AAAA_REEMPLAZAR_POR_CLAVE_REAL awx"
+#   nuevo_usuario: awx
+#   grupo_usuario: full
+#
+# Credencial Machine (para ESTA ejecucion):
+#   Usuario y contraseña actuales que ya funcionan.
+#
+# Despues, crea una segunda credencial Machine:
+#   Usuario: el valor de nuevo_usuario (ej. awx)
+#   SSH Private Key: la clave privada que corresponde a clave_publica
+#   Usala en los demas Job Templates (actualizar, backups, etc.).
+#
+# Generar el par de claves (recomendado ed25519):
+#   ssh-keygen -t ed25519 -C "awx" -f ~/.ssh/awx_key
+#   La publica es ~/.ssh/awx_key.pub (esa va en clave_publica).
+#   La privada es ~/.ssh/awx_key (esa va en la credencial de AWX).

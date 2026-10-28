@@ -1,0 +1,31 @@
+---
+# Envoltorio para el panel AWX-SNMP: una sola plantilla para "Desactivar SNMP y traps".
+#
+# El panel lanza con limit = un unico equipo y sin extra_vars, asi que las
+# variables van en la plantilla de AWX (o en una credencial personalizada).
+#
+# Se importan los dos fabricantes a proposito: cada play esta restringido a su
+# grupo, asi que con limit = un MikroTik solo corren los plays de MikroTik y los
+# de Cisco quedan sin hosts, sin hacer nada ni dar error.
+#
+# OJO con lo que hace "desactivar": retira solo la huella del panel, o sea su
+# comunidad y su destino de traps. NO apaga SNMP ni el envio global de traps,
+# porque el equipo puede estar siendo monitoreado por otro servidor.
+#
+# Cada playbook de fabricante ya retira el destino antes que la comunidad, que
+# es el orden correcto, asi que aqui solo se importan.
+
+- import_playbook: mikrotik/desactivar_snmp.yml
+- import_playbook: cisco/desactivar_snmp.yml
+
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias (las mismas que uso snmp_activar.yml):
+# snmp_comunidad: valor-secreto      # La comunidad que se va a borrar
+# snmp_trap_destino: 192.168.1.10    # IP del panel
+#
+# snmp_origen_permitido no se necesita aqui.
+#
+# En Cisco, sin "write memory" el borrado no sobrevive a un reinicio del switch.
+# En MikroTik no aplica: RouterOS persiste los cambios al momento.

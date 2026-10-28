@@ -1,0 +1,218 @@
+---
+# Actualiza RouterOS al ultimo release del canal "stable" y luego el firmware RouterBOARD.
+#
+# Usa :execute para lanzar descarga, reinicio y firmware en segundo plano.
+# Asi la consola no se queda en la vista en vivo del progreso y no salta el
+# timeout de 30 s de network_cli, aunque la descarga tarde varios minutos.
+#
+# Variables opcionales (Extra Variables en el Job Template):
+#   lote: 1                      # equipos en paralelo (1 = uno por uno)
+#   permitir_salto_mayor: false  # true permite pasar de 6.x a 7.x
+#   canal: stable
+#   descarga_reintentos: 15     # intentos de comprobar la descarga
+#   descarga_espera: 20          # segundos entre intentos (60 x 20 s = 20 min)
+
+- name: Actualizar MikroTik a la ultima version estable
+  hosts: EquiposMikrotik
+  gather_facts: false
+  serial: "{{ lote | default(1) }}"
+
+  vars:
+    canal: stable
+    permitir_salto_mayor: false
+    descarga_reintentos: 15
+    descarga_espera: 20
+    fecha: "{{ lookup('pipe', 'date +%Y%m%d-%H%M') }}"
+    puerto_ssh: "{{ ansible_port | default(22) }}"
+    ip_equipo: "{{ ansible_host | default(inventory_hostname) }}"
+
+  tasks:
+    # ---------------------------------------------------------------
+    # 1. Comprobar si hay actualizacion
+    # ---------------------------------------------------------------
+    - name: Buscar actualizaciones en el canal {{ canal }}
+      community.routeros.command:
+        commands:
+          - /system package update set channel={{ canal }}
+          - /system package update check-for-updates
+          - /system package update print
+      register: chequeo
+
+    - name: Leer versiones y estado
+      ansible.builtin.set_fact:
+        version_actual: "{{ ((chequeo.stdout[2] | regex_search('installed-version:\\s*(\\S+)', '\\1')) or [''])[0] }}"
+        version_nueva: "{{ ((chequeo.stdout[2] | regex_search('latest-version:\\s*(\\S+)', '\\1')) or [''])[0] }}"
+        estado: "{{ ((chequeo.stdout[2] | regex_search('status:\\s*(.+)', '\\1')) or [''])[0] | trim }}"
+
+    - name: Mostrar resumen
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: instalada={{ version_actual }} | disponible={{ version_nueva }} | estado={{ estado }}"
+
+    - name: Fallar si no se pudo consultar (sin internet o DNS)
+      ansible.builtin.fail:
+        msg: "{{ inventory_hostname }} no pudo consultar el servidor de actualizaciones. Estado: {{ estado }}"
+      when: version_nueva == '' or version_actual == ''
+
+    - name: Calcular si hay que actualizar
+      ansible.builtin.set_fact:
+        hay_update: "{{ version_actual != version_nueva }}"
+        salto_mayor: "{{ version_actual.split('.')[0] != version_nueva.split('.')[0] }}"
+
+    - name: Equipo ya actualizado, se omite
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} ya esta en {{ version_actual }}"
+      when: not hay_update
+
+    - name: Salto de version mayor bloqueado
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ version_actual }} -> {{ version_nueva }} es un salto mayor.
+          Se omite. Usa permitir_salto_mayor=true si lo quieres hacer.
+      when: hay_update and salto_mayor and not permitir_salto_mayor
+
+    - name: Terminar para este equipo si no hay nada que hacer
+      ansible.builtin.meta: end_host
+      when: not hay_update or (salto_mayor and not permitir_salto_mayor)
+
+    # ---------------------------------------------------------------
+    # 2. Backup previo
+    # ---------------------------------------------------------------
+    - name: Backup y export de la configuracion
+      community.routeros.command:
+        commands:
+          - /system backup save name=pre-update-{{ fecha }}
+          - /export file=pre-update-{{ fecha }}
+
+    # ---------------------------------------------------------------
+    # 3. Descargar RouterOS en segundo plano y reiniciar para instalar
+    # ---------------------------------------------------------------
+    - name: Iniciar la descarga en segundo plano
+      community.routeros.command:
+        commands:
+          - ':execute {/system package update download}'
+
+    - name: Esperar a que termine la descarga
+      community.routeros.command:
+        commands:
+          - /system package update print
+      register: descarga
+      until: >-
+        'please reboot' in descarga.stdout[0]
+        or 'ERROR' in descarga.stdout[0]
+        or 'failed' in descarga.stdout[0]
+      retries: "{{ descarga_reintentos | int }}"
+      delay: "{{ descarga_espera | int }}"
+
+    - name: Comprobar que la descarga termino bien
+      ansible.builtin.assert:
+        that:
+          - "'please reboot' in descarga.stdout[0]"
+        fail_msg: >-
+          {{ inventory_hostname }}: la descarga no termino correctamente.
+          Revisa /system package update print en el equipo.
+        success_msg: "{{ inventory_hostname }}: descarga completada, se reinicia para instalar."
+
+    - name: Reiniciar para instalar la version descargada
+      community.routeros.command:
+        commands:
+          - ':execute {/system reboot}'
+      ignore_errors: true        # la conexion se corta al reiniciar
+      ignore_unreachable: true
+
+    - name: Cerrar conexion anterior
+      ansible.builtin.meta: reset_connection
+
+    - name: Esperar a que el equipo vuelva (SSH)
+      ansible.builtin.wait_for:
+        host: "{{ ip_equipo }}"
+        port: "{{ puerto_ssh | int }}"
+        delay: 60
+        timeout: 600
+        state: started
+      delegate_to: localhost
+
+    - name: Verificar version instalada
+      community.routeros.command:
+        commands:
+          - /system package update print
+      register: post_update
+      retries: 6
+      delay: 15
+      until: post_update is succeeded
+
+    - name: Comprobar que quedo en la version esperada
+      ansible.builtin.assert:
+        that:
+          - "(post_update.stdout[0] | regex_search('installed-version:\\s*(\\S+)', '\\1'))[0] == version_nueva"
+        fail_msg: "{{ inventory_hostname }} no quedo en {{ version_nueva }}"
+        success_msg: "{{ inventory_hostname }} actualizado a {{ version_nueva }}"
+
+    # ---------------------------------------------------------------
+    # 4. Firmware RouterBOARD (no aplica a CHR/x86 virtual)
+    # ---------------------------------------------------------------
+    - name: Leer firmware RouterBOARD
+      community.routeros.command:
+        commands:
+          - /system routerboard print
+      register: fw
+      ignore_errors: true
+
+    - name: Comparar firmware actual y disponible
+      ansible.builtin.set_fact:
+        fw_actual: "{{ ((fw.stdout[0] | default('') | regex_search('current-firmware:\\s*(\\S+)', '\\1')) or [''])[0] }}"
+        fw_nuevo: "{{ ((fw.stdout[0] | default('') | regex_search('upgrade-firmware:\\s*(\\S+)', '\\1')) or [''])[0] }}"
+      when: fw is succeeded
+
+    - name: Actualizar firmware y reiniciar
+      when:
+        - fw is succeeded
+        - fw_actual | default('') != ''
+        - fw_nuevo | default('') != ''
+        - fw_actual != fw_nuevo
+      block:
+        - name: Subir firmware RouterBOARD (sin confirmacion interactiva)
+          community.routeros.command:
+            commands:
+              - ':execute {/system routerboard upgrade}'
+
+        - name: Dar unos segundos para que termine de escribir el firmware
+          ansible.builtin.wait_for:
+            timeout: 15
+          delegate_to: localhost
+
+        - name: Reiniciar para aplicar el firmware
+          community.routeros.command:
+            commands:
+              - ':execute {/system reboot}'
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Cerrar conexion anterior
+          ansible.builtin.meta: reset_connection
+
+        - name: Esperar a que vuelva tras el firmware
+          ansible.builtin.wait_for:
+            host: "{{ ip_equipo }}"
+            port: "{{ puerto_ssh | int }}"
+            delay: 60
+            timeout: 600
+            state: started
+          delegate_to: localhost
+
+    # ---------------------------------------------------------------
+    # 5. Resumen final
+    # ---------------------------------------------------------------
+    - name: Estado final del equipo
+      community.routeros.command:
+        commands:
+          - /system resource print
+          - /system routerboard print
+      register: final
+      retries: 6
+      delay: 15
+      until: final is succeeded
+      ignore_errors: true
+
+    - name: Mostrar resultado
+      ansible.builtin.debug:
+        var: final.stdout_lines[0]

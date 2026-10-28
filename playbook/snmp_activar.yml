@@ -1,0 +1,38 @@
+---
+# Envoltorio para el panel AWX-SNMP: una sola plantilla para "Activar SNMP y traps".
+#
+# El panel lanza con limit = un unico equipo y sin extra_vars, asi que las
+# variables van en la plantilla de AWX (o en una credencial personalizada).
+#
+# Se importan los dos fabricantes a proposito: cada play esta restringido a su
+# grupo, asi que con limit = un MikroTik solo corren los plays de MikroTik y los
+# de Cisco quedan sin hosts, sin hacer nada ni dar error.
+#
+# El orden importa: primero SNMP (que crea la comunidad) y despues los traps,
+# porque configurar_snmp_traps.yml comprueba que la comunidad ya exista.
+# Si falla la activacion de SNMP, el host queda marcado como fallido y Ansible
+# lo excluye de los plays siguientes, asi que los traps no se configuran.
+#
+# No lleva assert de "un solo host": activar SNMP con el mismo valor en varios
+# equipos a la vez es una operacion valida, a diferencia del hostname o la IP.
+
+- import_playbook: mikrotik/configurar_snmp.yml
+- import_playbook: mikrotik/configurar_snmp_traps.yml
+- import_playbook: cisco/configurar_snmp.yml
+- import_playbook: cisco/configurar_snmp_traps.yml
+
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
+# snmp_comunidad: valor-secreto          # Maximo 20 caracteres por Cisco
+# snmp_origen_permitido: 192.168.1.10    # IP del panel, SIN /32 (Cisco lo rechaza)
+# snmp_trap_destino: 192.168.1.10        # IP del panel
+#
+# Opcionales:
+# snmp_contacto: soporte@empresa.example
+# snmp_ubicacion: Sucursal principal
+#
+# La comunidad es secreta: en variables extra de la plantilla queda visible en
+# texto plano. Para mantenerla cifrada, usar un tipo de credencial personalizado
+# que inyecte la variable.

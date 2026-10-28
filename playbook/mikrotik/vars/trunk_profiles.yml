@@ -1,0 +1,17 @@
+---
+trunk_profiles:
+  hacia_switch:
+    # Uplink hacia switch/router autorizado para entregar respuestas DHCP.
+    portfast: false
+    bpdu_guard: false
+    ingress_filtering: true
+    frame_types: admit-only-vlan-tagged
+    dhcp_trusted: true
+
+  hacia_ap:
+    # AP sin enlaces mesh, WDS ni rutas L2 redundantes.
+    portfast: true
+    bpdu_guard: true
+    ingress_filtering: true
+    frame_types: admit-only-vlan-tagged
+    dhcp_trusted: false

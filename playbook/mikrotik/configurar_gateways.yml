@@ -1,0 +1,65 @@
+---
+- name: Configurar gateways IPv4
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+
+  tasks:
+    - name: Agregar ruta por defecto
+      community.routeros.command:
+        commands:
+          - >-
+            /ip route add dst-address=0.0.0.0/0
+            gateway={{ item.gateway | community.routeros.quote_argument_value }}
+            distance={{ item.distance | int }}
+            disabled={{ item.enabled | ternary('no', 'yes') }}
+            comment={{ ('AWX_GATEWAY_' ~ item.name) | community.routeros.quote_argument_value }}
+      loop: '{{ gateways_config }}'
+      loop_control:
+        label: '{{ item.name }} -> {{ item.gateway }}'
+
+    - name: Configurar check-gateway si el equipo lo admite
+      community.routeros.command:
+        commands:
+          - >-
+            /ip route set [find where comment={{ ('AWX_GATEWAY_' ~ item.name) |
+            community.routeros.quote_argument_value }}]
+            check-gateway={{ item.check_gateway | community.routeros.quote_argument_value }}
+      loop: '{{ gateways_config }}'
+      loop_control:
+        label: '{{ item.name }} -> check-gateway={{ item.check_gateway | default("omitido") }}'
+      when: item.check_gateway is defined
+      failed_when: false
+      changed_when: false
+
+    - name: Consultar rutas agregadas
+      community.routeros.command:
+        commands:
+          - >-
+            /ip route print where comment={{ ('AWX_GATEWAY_' ~ item.name) |
+            community.routeros.quote_argument_value }}
+      loop: '{{ gateways_config }}'
+      loop_control:
+        label: '{{ item.name }}'
+      register: gateways_resultado
+      changed_when: false
+
+    - name: Mostrar rutas configuradas
+      ansible.builtin.debug:
+        msg: '{{ item.stdout_lines[0] }}'
+      loop: '{{ gateways_resultado.results }}'
+      loop_control:
+        label: '{{ item.item.name }}'
+
+# VARIABLES EN AWX:
+# gateways_config:
+#   - name: principal
+#     gateway: 192.168.99.1
+#     distance: 1
+#     check_gateway: ping  # Opcional; se omite si el equipo no lo admite
+#     enabled: true
+#   - name: respaldo
+#     gateway: 192.168.88.1
+#     distance: 10
+#     check_gateway: ping
+#     enabled: true

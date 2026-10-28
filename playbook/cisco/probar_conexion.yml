@@ -1,0 +1,16 @@
+---
+- name: Probar conexión con Cisco SF350
+  hosts: EquiposCisco
+  gather_facts: false
+
+  tasks:
+    - name: Ejecutar show version
+      community.ciscosmb.command:
+        commands: |
+          show version
+      register: resultado
+      changed_when: false
+
+    - name: Mostrar resultado
+      ansible.builtin.debug:
+        var: resultado.stdout

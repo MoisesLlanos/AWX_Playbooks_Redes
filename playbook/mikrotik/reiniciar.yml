@@ -1,0 +1,83 @@
+---
+# Reinicia el equipo. La configuracion se conserva: RouterOS persiste los
+# cambios al momento, asi que no hay nada que guardar antes.
+#
+# serial: 1 a proposito. Reinicia de uno en uno para no cortar la red entera a
+# la vez, y porque el camino hacia los equipos siguientes puede pasar por el
+# que se esta reiniciando.
+- name: Reiniciar MikroTik
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+  serial: 1
+
+  vars:
+    espera_inicial: 30
+    espera_maxima: 300
+    # hostvars[...] en lugar de ansible_host porque dentro de
+    # delegate_to: localhost, ansible_host apunta al host delegado.
+    ip_equipo: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+    puerto_ssh: "{{ ansible_port | default(22) }}"
+
+  tasks:
+    - name: Leer el uptime antes de reiniciar
+      community.routeros.command:
+        commands:
+          - ':put [/system resource get uptime]'
+      register: uptime_antes
+      changed_when: false
+
+    # :execute lanza el reinicio en segundo plano, asi el comando devuelve
+    # antes de que se corte la conexion.
+    - name: Lanzar el reinicio
+      community.routeros.command:
+        commands:
+          - ':execute {/system reboot}'
+      ignore_errors: true
+      ignore_unreachable: true
+      changed_when: true
+
+    - name: Cerrar la conexion anterior
+      ansible.builtin.meta: reset_connection
+
+    - name: Esperar a que el equipo vuelva
+      ansible.builtin.wait_for:
+        host: "{{ ip_equipo }}"
+        port: "{{ puerto_ssh | int }}"
+        delay: "{{ espera_inicial | int }}"
+        timeout: "{{ espera_maxima | int }}"
+        state: started
+      delegate_to: localhost
+
+    - name: Leer el uptime despues del reinicio
+      community.routeros.command:
+        commands:
+          - ':put [/system resource get uptime]'
+          - ':put [/system resource get version]'
+      register: uptime_despues
+      until: uptime_despues is succeeded
+      retries: 6
+      delay: 15
+      changed_when: false
+
+    # El uptime es la prueba de que reinicio de verdad, y no solo de que el
+    # puerto 22 volvio a responder.
+    - name: Mostrar el resultado
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} volvio.
+          uptime antes={{ uptime_antes.stdout[0] | trim }},
+          ahora={{ uptime_despues.stdout[0] | trim }},
+          RouterOS {{ uptime_despues.stdout[1] | trim }}
+
+
+# ============================================================
+# VARIABLES EN AWX
+# ============================================================
+#
+# No necesita variables. Opcionales:
+# espera_inicial: 30    # segundos antes de empezar a comprobar el puerto SSH
+# espera_maxima: 300    # segundos como maximo esperando a que vuelva
+#
+# Reinicia todo lo que coincida con el Limite de AWX. Con el Limite vacio,
+# son los 5 equipos del grupo EquiposMikrotik.

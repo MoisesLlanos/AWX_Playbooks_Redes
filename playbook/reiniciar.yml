@@ -1,0 +1,56 @@
+---
+# Reinicio general. Una sola plantilla de AWX para programar el reinicio de
+# varios equipos a una hora determinada.
+#
+# Se importan los dos fabricantes y cada play esta restringido a su grupo, asi
+# que SIN limit reinicia todo el inventario: los MikroTik y los Cisco.
+# Con limit = un equipo o un grupo, reinicia solo eso.
+#
+# Los dos playbooks llevan serial: 1, asi que los equipos caen de uno en uno y
+# el job tarda la suma: unos 2-4 min por MikroTik y hasta 7 por Cisco. Diez
+# equipos pueden ser 40 minutos, cuenta esa ventana al elegir la hora.
+#
+# ############################ AVISO ############################
+# En los Cisco SF/SG, lo que no este en startup-config SE PIERDE al reiniciar,
+# y aqui guardar_antes sigue siendo false. Si el trabajo programado debe
+# conservar lo aplicado, pon guardar_antes: true en las variables.
+# ###############################################################
+#
+# Primero los MikroTik y luego los Cisco, igual que backup.yml. Si el camino de
+# red hacia los Cisco pasa por un MikroTik, mejor dos plantillas separadas con
+# dos calendarios, para que el reinicio del router no deje los switches
+# inalcanzables en la misma ejecucion.
+
+- import_playbook: mikrotik/reiniciar.yml
+- import_playbook: cisco/reiniciar.yml
+
+
+######  COMO PROGRAMARLO EN AWX  #######
+
+# 1. Plantilla nueva, tipo Run, playbook: playbook/reiniciar.yml
+#
+# 2. IMPORTANTE: asignarle el inventario "Equipos de red" y DESMARCAR
+#    "Preguntar al iniciar" en ese campo. Un trabajo programado no puede
+#    responder preguntas, asi que una plantilla sin inventario fijo falla al
+#    ejecutarse por horario.
+#
+# 3. Limite: a diferencia del backup, aqui casi nunca quieres el inventario
+#    entero. Escribe los equipos o el grupo en el campo Limite de la plantilla
+#    con "Preguntar al iniciar" desmarcado, una plantilla por conjunto de
+#    equipos. Si lo marcas, el asistente del Calendario te deja rellenarlo y lo
+#    guarda con la programacion, pero comprueba despues que el calendario
+#    conserve el limite.
+#
+# 4. Credenciales: hacen falta las de los dos fabricantes a la vez, porque el
+#    job cubre MikroTik y Cisco en la misma ejecucion.
+#
+# 5. Anadir un Calendario (Schedule) a la plantilla con la hora deseada, por
+#    ejemplo domingos a las 03:00. Revisa la zona horaria: AWX suele venir en
+#    UTC y te desplaza la hora.
+#
+# No necesita variables. Opcionales:
+# guardar_antes: false   # solo afecta a los Cisco
+# espera_inicial         # OJO: una variable de AWX se aplica a los DOS plays y
+# espera_maxima          # pisa los valores propios de cada uno (60/420 en
+#                        # Cisco, 30/300 en MikroTik). Si solo quieres cambiar
+#                        # uno, editalo en su playbook.

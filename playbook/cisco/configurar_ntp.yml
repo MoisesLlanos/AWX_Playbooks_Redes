@@ -1,0 +1,48 @@
+---
+- name: Configurar cliente SNTP en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Validar dirección del servidor NTP
+      ansible.builtin.assert:
+        that:
+          - ntp_server_ip is defined
+          - ntp_server_ip | trim | length > 0
+        fail_msg: >-
+          Debes proporcionar la variable ntp_server_ip
+          con la dirección del servidor NTP interno.
+
+    - name: Configurar cliente y servidor SNTP local
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - clock source sntp
+          - sntp unicast client enable
+          - sntp unicast client poll
+          - "sntp server {{ ntp_server_ip }} poll"
+          - end
+
+    - name: Consultar estado del cliente SNTP
+      community.ciscosmb.command:
+        commands:
+          - show sntp configuration
+          - show clock detail
+      register: ntp_result
+      changed_when: false
+
+    - name: Mostrar resultado
+      ansible.builtin.debug:
+        var: ntp_result.stdout
+
+    # - name: Guardar configuración
+    #   community.ciscosmb.command:
+    #     commands:
+    #       - write memory
+
+
+
+######  VARIABLES EN AWX  #######
+
+# ntp_server_ip: 192.168.99.10

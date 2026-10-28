@@ -1,0 +1,33 @@
+---
+# Orden: ejecutar despues de configurar_bridge_vlans.yml y antes de los puertos.
+# Solo administra protocol-mode del bridge; edge y BPDU Guard pertenecen
+# a configurar_ports_trunks.yml y configurar_ports_access.yml.
+- name: Activar RSTP globalmente en el bridge
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  tasks:
+    - name: Activar RSTP en el bridge
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local bid [/interface bridge find where name=$br];
+            :if ([/interface bridge get $bid protocol-mode] != "rstp") do={
+            /interface bridge set $bid protocol-mode=rstp;
+            :put "RSTP_CAMBIADO"; };
+            :put "RSTP_OK"; }
+      register: resultado_rstp
+      failed_when: >-
+        'RSTP_OK' not in
+        (resultado_rstp.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'RSTP_CAMBIADO' in
+        (resultado_rstp.stdout | default(['']))[0].splitlines()
+
+# VARIABLES EN AWX (ejemplo):
+# bridge_name: BRtrunk
+# management_port: ether1

@@ -1,0 +1,91 @@
+---
+- name: Configurar SNMP traps en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Validar variables de SNMP traps
+      ansible.builtin.assert:
+        that:
+          - snmp_trap_destino is defined
+          - snmp_trap_destino | trim | length > 0
+          - snmp_comunidad is defined
+          - snmp_comunidad | trim | length > 0
+          - snmp_comunidad | trim | length <= 20
+        fail_msg: >-
+          Define snmp_trap_destino y snmp_comunidad en AWX.
+          La comunidad puede tener como máximo 20 caracteres.
+
+    - name: Consultar configuración SNMP actual
+      community.ciscosmb.command:
+        commands:
+          - show snmp
+          - show running-config
+      register: snmp_traps_actual
+      changed_when: false
+      no_log: true
+
+    - name: Comprobar que la comunidad SNMP existe
+      ansible.builtin.assert:
+        that:
+          - snmp_comunidad | trim in snmp_traps_actual.stdout[0]
+        fail_msg: >-
+          La comunidad SNMP indicada no existe. Ejecuta primero
+          configurar_snmp.yml.
+
+    - name: Activar envío global de traps
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - snmp-server enable traps
+          - end
+      when: "'Traps are enabled' not in snmp_traps_actual.stdout[0]"
+
+    - name: Configurar destino de traps SNMPv2c
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - >-
+            snmp-server host {{ snmp_trap_destino | trim }} traps
+            version 2c {{ snmp_comunidad | trim }}
+          - end
+      when: >-
+        (snmp_traps_actual.stdout[1] | regex_search(
+          '(?m)^\\s*snmp-server host\\s+'
+          ~ (snmp_trap_destino | trim | regex_escape)
+          ~ '.*\\s'
+          ~ (snmp_comunidad | trim | regex_escape)
+          ~ '(?:\\s|$)'
+        )) is none
+      no_log: true
+
+    - name: Consultar estado final de SNMP traps
+      community.ciscosmb.command:
+        commands:
+          - show snmp
+      register: snmp_traps_final
+      changed_when: false
+      no_log: true
+
+    - name: Confirmar destino de SNMP traps
+      ansible.builtin.assert:
+        that:
+          - snmp_trap_destino | trim in snmp_traps_final.stdout[0]
+          - snmp_comunidad | trim in snmp_traps_final.stdout[0]
+        fail_msg: >-
+          No se encontró el destino de SNMP traps configurado.
+        success_msg: >-
+          SNMP traps quedó configurado correctamente.
+
+    # - name: Guardar configuración
+    #   community.ciscosmb.command:
+    #     commands:
+    #       - write memory
+
+
+
+######  VARIABLES EN AWX  #######
+
+# snmp_trap_destino: 192.168.1.10
+# snmp_comunidad: J9MBYrvCKdbqm7o_336Y

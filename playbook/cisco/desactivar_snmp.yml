@@ -1,0 +1,115 @@
+---
+# Retira solo la huella del panel: su destino de traps y su comunidad.
+# NO apaga el servidor SNMP ni el envio global de traps, porque el equipo
+# puede estar siendo monitoreado por otro servidor.
+- name: Retirar comunidad y destino de traps del panel en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Validar variables de SNMP
+      ansible.builtin.assert:
+        that:
+          - snmp_comunidad is defined
+          - snmp_comunidad | trim | length > 0
+          - snmp_trap_destino is defined
+          - snmp_trap_destino | trim | length > 0
+        fail_msg: >-
+          Define snmp_comunidad y snmp_trap_destino en AWX.
+
+    - name: Consultar configuracion SNMP actual
+      community.ciscosmb.command:
+        commands:
+          - show running-config
+      register: snmp_actual
+      changed_when: false
+      no_log: "{{ snmp_no_log | default(true) | bool }}"
+
+    # Los regex se evaluan aqui, con no_log, para que la comunidad no aparezca
+    # en los mensajes de las tareas siguientes ni en los del assert final.
+    - name: Comprobar que hay que retirar
+      ansible.builtin.set_fact:
+        hay_destino: >-
+          {{ (snmp_actual.stdout[0] | regex_search(
+                '(?m)^\s*snmp-server host\s+'
+                ~ (snmp_trap_destino | trim | regex_escape)
+                ~ '(?:\s|$)'
+             )) is not none }}
+        hay_comunidad: >-
+          {{ (snmp_actual.stdout[0] | regex_search(
+                '(?m)^\s*snmp-server community\s+'
+                ~ (snmp_comunidad | trim | regex_escape)
+                ~ '(?:\s|$)'
+             )) is not none }}
+      no_log: "{{ snmp_no_log | default(true) | bool }}"
+
+    # El orden importa: la entrada "snmp-server host" referencia la comunidad,
+    # asi que primero se retira el destino y despues la comunidad.
+    - name: Retirar el destino de traps del panel
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "no snmp-server host {{ snmp_trap_destino | trim }}"
+          - end
+      when: hay_destino | bool
+      changed_when: true
+
+    - name: Borrar la comunidad del panel
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "no snmp-server community {{ snmp_comunidad | trim }}"
+          - end
+      when: hay_comunidad | bool
+      changed_when: true
+      no_log: "{{ snmp_no_log | default(true) | bool }}"
+
+    - name: Consultar configuracion SNMP final
+      community.ciscosmb.command:
+        commands:
+          - show running-config
+      register: snmp_final
+      changed_when: false
+      no_log: "{{ snmp_no_log | default(true) | bool }}"
+
+    - name: Comprobar si quedan rastros del panel
+      ansible.builtin.set_fact:
+        queda_destino: >-
+          {{ (snmp_final.stdout[0] | regex_search(
+                '(?m)^\s*snmp-server host\s+'
+                ~ (snmp_trap_destino | trim | regex_escape)
+                ~ '(?:\s|$)'
+             )) is not none }}
+        queda_comunidad: >-
+          {{ (snmp_final.stdout[0] | regex_search(
+                '(?m)^\s*snmp-server community\s+'
+                ~ (snmp_comunidad | trim | regex_escape)
+                ~ '(?:\s|$)'
+             )) is not none }}
+      no_log: "{{ snmp_no_log | default(true) | bool }}"
+
+    - name: Verificar que el panel ya no tiene acceso
+      ansible.builtin.assert:
+        that:
+          - not (queda_destino | bool)
+          - not (queda_comunidad | bool)
+        fail_msg: >-
+          El destino de traps o la comunidad del panel siguen en la
+          configuracion del switch.
+        success_msg: >-
+          El switch ya no tiene el destino de traps ni la comunidad del panel.
+
+#    - name: Guardar configuración
+#      community.ciscosmb.command:
+#        commands:
+#          - write memory
+
+
+######  VARIABLES EN AWX  #######
+
+# snmp_comunidad: la misma que creo configurar_snmp.yml
+# snmp_trap_destino: 192.168.1.10   # IP del panel
+
+# No apaga SNMP ni los traps globales: solo retira lo del panel.
+# Sin "write memory", el borrado no sobrevive a un reinicio del switch.

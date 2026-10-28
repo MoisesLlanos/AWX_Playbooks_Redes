@@ -1,0 +1,70 @@
+---
+- name: Activar y configurar SNMP global
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+
+  pre_tasks:
+    - name: Validar variables SNMP
+      ansible.builtin.assert:
+        that:
+          - snmp_comunidad is defined
+          - snmp_comunidad is string
+          - snmp_comunidad | trim | length > 0
+          - snmp_origen_permitido is defined
+          - snmp_origen_permitido is string
+          - snmp_origen_permitido | trim | length > 0
+        fail_msg: >-
+          Define snmp_comunidad y snmp_origen_permitido en AWX.
+
+  tasks:
+    - name: Activar SNMP
+      community.routeros.command:
+        commands:
+          - /snmp set enabled=yes
+
+    - name: Configurar contacto SNMP
+      community.routeros.command:
+        commands:
+          - /snmp set contact={{ snmp_contacto | default('') | community.routeros.quote_argument_value }}
+
+    - name: Configurar ubicacion SNMP
+      community.routeros.command:
+        commands:
+          - /snmp set location={{ snmp_ubicacion | default('') | community.routeros.quote_argument_value }}
+
+    - name: Comprobar si ya existe la comunidad SNMPv2c
+      community.routeros.command:
+        commands:
+          - >-
+            :put [:len [/snmp community find where name={{ snmp_comunidad | community.routeros.quote_argument_value }}]]
+      register: snmp_comunidad_busqueda
+      changed_when: false
+      no_log: true
+
+    - name: Crear comunidad SNMPv2c de solo lectura si no existe
+      community.routeros.command:
+        commands:
+          - /snmp community add name={{ snmp_comunidad | community.routeros.quote_argument_value }} address={{ snmp_origen_permitido | community.routeros.quote_argument_value }} security=none read-access=yes write-access=no
+      when: (snmp_comunidad_busqueda.stdout[0] | trim | int) == 0
+      changed_when: true
+      no_log: true
+
+    - name: Consultar configuracion global de SNMP
+      community.routeros.command:
+        commands:
+          - /snmp print
+      register: snmp_estado
+      changed_when: false
+
+    - name: Mostrar configuracion global
+      ansible.builtin.debug:
+        msg: '{{ snmp_estado.stdout_lines[0] }}'
+
+# VARIABLES OBLIGATORIAS EN AWX:
+# snmp_comunidad: valor-secreto-no-predeterminado
+# snmp_origen_permitido: 192.168.99.20/32
+#
+# VARIABLES OPCIONALES:
+# snmp_contacto: soporte@empresa.example
+# snmp_ubicacion: Sucursal principal

@@ -1,0 +1,95 @@
+---
+- name: Configurar SNMP traps
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+
+  vars:
+    snmp_trap_generators: interfaces,start-trap
+    snmp_trap_interfaces: all
+    snmp_comunidad_efectiva: "{{ snmp_comunidad | default(snmp_trap_comunidad | default('')) }}"
+
+  pre_tasks:
+    - name: Validar variables de SNMP traps
+      ansible.builtin.assert:
+        that:
+          - snmp_trap_destino is defined
+          - snmp_trap_destino is string
+          - snmp_trap_destino | trim | length > 0
+          - snmp_comunidad_efectiva | trim | length > 0
+        fail_msg: >-
+          Define snmp_trap_destino y snmp_comunidad (o snmp_trap_comunidad).
+
+  tasks:
+    - name: Comprobar que existe la comunidad SNMPv2c
+      community.routeros.command:
+        commands:
+          - >-
+            :put [:len [/snmp community find where name={{ snmp_comunidad_efectiva | community.routeros.quote_argument_value }}]]
+      register: snmp_comunidad_resultado
+      changed_when: false
+      no_log: true
+
+    - name: Detener si la comunidad SNMP no existe
+      ansible.builtin.assert:
+        that:
+          - >-
+            (snmp_comunidad_resultado.stdout[0].splitlines()
+            | select('match', '^\\s*[0-9]+\\s*$') | list | last | trim | int) > 0
+        fail_msg: >-
+          La comunidad SNMPv2c configurada no existe. Ejecuta primero
+          configurar_snmp.yml para crearla.
+
+    - name: Configurar destino de SNMP traps
+      community.routeros.command:
+        commands:
+          - /snmp set trap-target={{ snmp_trap_destino | community.routeros.quote_argument_value }}
+      no_log: true
+
+    - name: Configurar comunidad de SNMP traps
+      community.routeros.command:
+        commands:
+          - /snmp set trap-community={{ snmp_comunidad_efectiva | community.routeros.quote_argument_value }}
+      no_log: true
+
+    - name: Configurar version SNMPv2c para traps
+      community.routeros.command:
+        commands:
+          - /snmp set trap-version=2
+
+    - name: Configurar generadores de SNMP traps
+      community.routeros.command:
+        commands:
+          - /snmp set trap-generators={{ snmp_trap_generators | community.routeros.quote_argument_value }}
+
+    - name: Configurar interfaces de SNMP traps
+      community.routeros.command:
+        commands:
+          - /snmp set trap-interfaces={{ snmp_trap_interfaces | community.routeros.quote_argument_value }}
+
+    - name: Consultar configuracion de SNMP traps
+      community.routeros.command:
+        commands:
+          - ':put [/snmp get enabled]'
+          - ':put [/snmp get trap-target]'
+          - ':put [/snmp get trap-version]'
+          - ':put [/snmp get trap-generators]'
+      register: snmp_traps_estado
+      changed_when: false
+
+    - name: Mostrar estado de SNMP traps
+      ansible.builtin.debug:
+        msg:
+          enabled: '{{ snmp_traps_estado.stdout[0] }}'
+          destino: '{{ snmp_traps_estado.stdout[1] }}'
+          version: '{{ snmp_traps_estado.stdout[2] }}'
+          generadores: '{{ snmp_traps_estado.stdout[3] }}'
+
+# VARIABLES OBLIGATORIAS EN AWX:
+# snmp_trap_destino: 192.168.99.20
+# snmp_comunidad: debe coincidir con la comunidad creada por configurar_snmp.yml
+# Tambien se acepta el nombre anterior: snmp_trap_comunidad
+#
+# VARIABLES OPCIONALES:
+# snmp_trap_generators: interfaces,start-trap
+# snmp_trap_interfaces: all

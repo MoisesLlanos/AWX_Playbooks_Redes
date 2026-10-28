@@ -1,0 +1,94 @@
+---
+# Guarda el running-config de cada Cisco en /backups/<equipo>/<fecha>.cfg
+#
+# /backups es un bind mount del host montado en los contenedores de AWX.
+# El "delegate_to: localhost" es obligatorio: sin el, Ansible intentaria
+# escribir el archivo en el switch. Y "localhost" aqui no es la laptop, es
+# el contenedor awx_task, que es donde esta montado /backups.
+#
+# OJO: el running-config de Cisco SI incluye los hashes de contrasenas y la
+# comunidad SNMP. Por eso los archivos se guardan en 0600 y la carpeta en 0700,
+# al contrario que en MikroTik, donde /export oculta los secretos.
+- name: Backup de configuracion de Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  vars:
+    backup_dir: /backups
+
+  pre_tasks:
+    - name: Validar el directorio de backups
+      ansible.builtin.assert:
+        that:
+          - backup_dir is defined
+          - backup_dir | trim | length > 0
+        fail_msg: >-
+          Define backup_dir. Por defecto es /backups, que es el bind mount
+          de AWX.
+
+    # Se fija una sola vez para que todos los archivos de esta ejecucion
+    # lleven la misma marca de tiempo.
+    - name: Fijar la fecha de esta ejecucion
+      ansible.builtin.set_fact:
+        fecha: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+  tasks:
+    - name: Leer la configuracion en ejecucion
+      community.ciscosmb.command:
+        commands:
+          - show running-config
+      register: configuracion
+      changed_when: false
+      no_log: "{{ backup_no_log | default(true) | bool }}"
+
+    - name: Comprobar que la configuracion trajo contenido
+      ansible.builtin.assert:
+        that:
+          - configuracion.stdout is defined
+          - (configuracion.stdout[0] | default('') | trim | length) > 0
+        fail_msg: >-
+          El running-config de {{ inventory_hostname }} vino vacio.
+          No se escribe ningun archivo para no sobrescribir un backup bueno.
+
+    # copy no crea los directorios padre, de ahi que haga falta esta tarea.
+    - name: Crear el directorio del equipo
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+
+    - name: Guardar la configuracion con fecha
+      ansible.builtin.copy:
+        content: "{{ configuracion.stdout[0] }}\n"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ fecha }}.cfg"
+        mode: "0600"
+      delegate_to: localhost
+      no_log: "{{ backup_no_log | default(true) | bool }}"
+
+    # Copia de nombre fijo, para comparar contra la anterior con un diff.
+    - name: Actualizar ultimo.cfg
+      ansible.builtin.copy:
+        content: "{{ configuracion.stdout[0] }}\n"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/ultimo.cfg"
+        mode: "0600"
+      delegate_to: localhost
+      no_log: "{{ backup_no_log | default(true) | bool }}"
+
+    - name: Mostrar donde quedo el backup
+      ansible.builtin.debug:
+        msg: >-
+          {{ backup_dir }}/{{ inventory_hostname }}/{{ fecha }}.cfg
+          ({{ configuracion.stdout[0] | length }} caracteres)
+
+
+######  VARIABLES EN AWX  #######
+
+# No necesita ninguna. Opcionales:
+# backup_dir: /backups     # cambiar solo si se monta otra ruta
+# backup_no_log: false     # destapa la salida para depurar; deja la
+#                          # configuracion del switch en el log del job
+#
+# Pendiente, decidido para despues: rotacion de backups antiguos.
+# Este playbook no borra nada, asi que la carpeta crece sin limite.

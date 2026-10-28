@@ -1,0 +1,60 @@
+---
+# percent se usa con storm-rate en equipos compatibles.
+# packets_per_second se usa con ingress-port-policer en CRS1xx/CRS2xx.
+port_profiles:
+  usuario:
+    portfast: true
+    bpdu_guard: true
+    ingress_filtering: true
+    frame_types: admit-only-untagged-and-priority-tagged
+    dhcp_trusted: false
+    broadcast_storm_control:
+      enabled: true
+      percent: 1
+      packets_per_second: 500
+
+  impresora:
+    portfast: true
+    bpdu_guard: true
+    ingress_filtering: true
+    frame_types: admit-only-untagged-and-priority-tagged
+    dhcp_trusted: false
+    broadcast_storm_control:
+      enabled: true
+      percent: 1
+      packets_per_second: 500
+
+  camara:
+    portfast: true
+    bpdu_guard: true
+    ingress_filtering: true
+    frame_types: admit-only-untagged-and-priority-tagged
+    dhcp_trusted: false
+    broadcast_storm_control:
+      enabled: true
+      percent: 1
+      packets_per_second: 500
+
+  telefono:
+    # Teléfono solo, con una VLAN sin etiqueta.
+    portfast: true
+    bpdu_guard: true
+    ingress_filtering: true
+    frame_types: admit-only-untagged-and-priority-tagged
+    dhcp_trusted: false
+    broadcast_storm_control:
+      enabled: true
+      percent: 1
+      packets_per_second: 500
+
+  servidor:
+    # Puerto de borde sin confianza DHCP ni aceptación de BPDUs.
+    portfast: true
+    bpdu_guard: true
+    ingress_filtering: true
+    frame_types: admit-only-untagged-and-priority-tagged
+    dhcp_trusted: false
+    broadcast_storm_control:
+      enabled: true
+      percent: 1
+      packets_per_second: 500

@@ -1,0 +1,30 @@
+# Inventario de EJEMPLO, solo para probar desde la linea de comandos.
+#
+# El inventario real lo mantiene AWX y es el que usan las plantillas. Este
+# archivo existe para poder lanzar un playbook a mano sin AWX, y por eso los
+# nombres de grupo son los mismos que esperan los playbooks: EquiposCisco y
+# EquiposMikrotik. Copialo a inventario/hosts.ini (ignorado por git) y pon las
+# IPs reales.
+
+[EquiposMikrotik]
+nivel1 ansible_host=192.0.2.11
+nivel2 ansible_host=192.0.2.12
+
+[EquiposCisco]
+cisco1 ansible_host=192.0.2.21
+cisco2 ansible_host=192.0.2.22
+
+[EquiposMikrotik:vars]
+ansible_connection=ansible.netcommon.network_cli
+ansible_network_os=community.routeros.routeros
+ansible_user=admin
+ansible_command_timeout=60
+
+[EquiposCisco:vars]
+ansible_connection=ansible.netcommon.network_cli
+ansible_network_os=community.ciscosmb.ciscosmb
+ansible_user=admin
+ansible_command_timeout=60
+# Los SF/SG no necesitan enable con el usuario de nivel 15:
+#ansible_become=yes
+#ansible_become_method=enable

@@ -1,0 +1,28 @@
+---
+- name: Configurar cliente NTP
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+
+  tasks:
+    - name: Configurar servidor NTP
+      community.routeros.command:
+        commands:
+          - /system ntp client set enabled=yes primary-ntp=192.168.88.10
+
+    - name: Leer configuracion del cliente NTP
+      community.routeros.command:
+        commands:
+          - /system ntp client print
+      register: ntp_estado
+      changed_when: false
+
+    - name: Verificar configuracion del cliente NTP
+      ansible.builtin.assert:
+        that:
+          - "'enabled: yes' in (ntp_estado.stdout | join(' '))"
+          - "'primary-ntp: 192.168.88.10' in (ntp_estado.stdout | join(' '))"
+        fail_msg: >-
+          El cliente NTP no quedo habilitado con el servidor
+          192.168.88.10. Estado: {{ ntp_estado.stdout | join(' ') }}
+        success_msg: Cliente NTP habilitado con 192.168.88.10.

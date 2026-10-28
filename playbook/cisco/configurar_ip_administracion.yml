@@ -1,0 +1,77 @@
+---
+- name: Configurar IP de administracion en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+  serial: 1
+
+  vars:
+    management_ssh_port: "{{ ansible_port | default(22) }}"
+
+  tasks:
+    - name: Validar variables de administracion
+      ansible.builtin.assert:
+        that:
+          - management_vlan is defined
+          - management_vlan | int >= 1
+          - management_vlan | int <= 4094
+          - management_ip is defined
+          - management_ip | trim | length > 0
+          - management_mask is defined
+          - management_mask | trim | length > 0
+        fail_msg: >-
+          Define management_vlan, management_ip y management_mask.
+
+    - name: Configurar IP en la VLAN de administracion
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "interface vlan {{ management_vlan }}"
+          - no shutdown
+          - "ip address {{ management_ip }} {{ management_mask }}"
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Cerrar conexion con la IP anterior
+      ansible.builtin.meta: reset_connection
+
+    - name: Usar la nueva IP durante el resto del trabajo
+      ansible.builtin.set_fact:
+        ansible_host: "{{ management_ip }}"
+
+    - name: Esperar SSH en la nueva IP
+      ansible.builtin.wait_for:
+        host: "{{ management_ip }}"
+        port: "{{ management_ssh_port | int }}"
+        delay: 3
+        timeout: 120
+        state: started
+      delegate_to: localhost
+
+    - name: Consultar IP de administracion
+      community.ciscosmb.command:
+        commands:
+          - "show ip interface vlan {{ management_vlan }}"
+      register: management_result
+      changed_when: false
+
+    - name: Verificar IP configurada
+      ansible.builtin.assert:
+        that:
+          - management_ip in management_result.stdout[0]
+        fail_msg: >-
+          La IP {{ management_ip }} no aparece en la VLAN
+          {{ management_vlan }}.
+        success_msg: >-
+          IP {{ management_ip }} configurada en VLAN {{ management_vlan }}.
+
+#    - name: Guardar configuracion
+#      community.ciscosmb.command:
+#        commands:
+#          - write memory
+
+
+###### VARIABLES EN AWX ######
+
+# management_vlan: 99
+# management_ip: 192.168.99.13
+# management_mask: 255.255.255.0

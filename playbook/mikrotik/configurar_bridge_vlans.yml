@@ -1,0 +1,80 @@
+---
+# Orden: bridge/VLANs, RSTP, troncales y puertos de acceso.
+# Este playbook no administra protocol-mode; configurar_rstp.yml lo hace despues.
+- name: Crear bridge y tabla VLAN sin asignar puertos fisicos
+  hosts: EquiposMikrotik
+  connection: ansible.netcommon.network_cli
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  tasks:
+    - name: Crear bridge o habilitar su filtrado VLAN
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local bid [/interface bridge find where name=$br];
+            :if ([:len $bid] = 0) do={
+            /interface bridge add name=$br vlan-filtering=yes;
+            :put "BRIDGE_CAMBIADO";
+            } else={
+            :if ([/interface bridge get $bid vlan-filtering] = false) do={
+            /interface bridge set $bid vlan-filtering=yes;
+            :put "BRIDGE_CAMBIADO"; }; };
+            :put "BRIDGE_OK"; }
+      register: resultado_bridge
+      failed_when: >-
+        'BRIDGE_OK' not in
+        (resultado_bridge.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'BRIDGE_CAMBIADO' in
+        (resultado_bridge.stdout | default(['']))[0].splitlines()
+
+    - name: Crear entrada estatica VLAN sin asignar puertos
+      community.routeros.command:
+        commands:
+          - >-
+            { :local br {{ bridge_name | community.routeros.quote_argument_value }};
+            :local vid {{ item.vlan_id | int }};
+            :local nombre {{ item.vlan_name | community.routeros.quote_argument_value }};
+            :local e [/interface bridge vlan find where bridge=$br
+            and vlan-ids=$vid and dynamic=no];
+            :if ([:len $e] = 0) do={
+            /interface bridge vlan add bridge=$br vlan-ids=$vid comment=$nombre;
+            :put "TABLA_CAMBIADA"; };
+            :put "TABLA_OK"; }
+      loop: "{{ vlans_config }}"
+      loop_control:
+        label: "VLAN {{ item.vlan_id }} - {{ item.vlan_name }}"
+      register: resultado_tabla
+      failed_when: >-
+        'TABLA_OK' not in
+        (resultado_tabla.stdout | default(['']))[0].splitlines()
+      changed_when: >-
+        'TABLA_CAMBIADA' in
+        (resultado_tabla.stdout | default(['']))[0].splitlines()
+
+
+# ============================================================
+# VARIABLES EN AWX
+# ============================================================
+#
+# bridge_name: bridge1
+# management_port: ether1
+#
+# vlans_config:
+#   - vlan_id: 10
+#     vlan_name: USUARIOS
+#
+#   - vlan_id: 20
+#     vlan_name: IMPRESORAS
+#
+#   - vlan_id: 30
+#     vlan_name: CAMARAS
+#
+#   - vlan_id: 40
+#     vlan_name: TELEFONOS
+#
+#   - vlan_id: 50
+#     vlan_name: SERVIDORES

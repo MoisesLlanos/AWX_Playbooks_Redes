@@ -1,0 +1,116 @@
+---
+- name: Configurar puertos trunk en Cisco SF/SG/CBS
+  hosts: EquiposCisco
+  gather_facts: false
+
+  vars_files:
+    - vars/trunk_profiles.yml
+
+  tasks:
+    - name: Verificar variable trunk_ports
+      ansible.builtin.assert:
+        that:
+          - trunk_ports is defined
+          - trunk_ports | length > 0
+        fail_msg: "Debes proporcionar la variable trunk_ports."
+
+    - name: Validar perfiles troncales
+      ansible.builtin.assert:
+        that:
+          - item.profile is defined
+          - item.profile | default('') in trunk_profiles
+        fail_msg: >-
+          Debes asignar a {{ item.interface | default('la interfaz') }}
+          uno de estos perfiles: {{ trunk_profiles.keys() | list | join(', ') }}.
+      loop: "{{ trunk_ports }}"
+      loop_control:
+        label: "{{ item.interface | default('interfaz desconocida') }}"
+
+    - name: Validar puertos troncales
+      ansible.builtin.assert:
+        that:
+          - item.interface is defined
+          - item.tagged_vlans is defined
+          - item.tagged_vlans | length > 0
+          - >-
+            (item.native_vlan | default(1) | int) not in
+            (item.tagged_vlans | map('int') | list)
+        fail_msg: >-
+          Configuración troncal incorrecta para
+          {{ item.interface | default('interfaz desconocida') }}.
+          La VLAN nativa no debe repetirse en tagged_vlans.
+      loop: "{{ trunk_ports }}"
+      loop_control:
+        label: "{{ item.interface | default('interfaz desconocida') }}"
+
+    - name: Configurar puertos troncales
+      community.ciscosmb.command:
+        commands:
+          - configure terminal
+          - "interface {{ item.interface }}"
+          - "description {{ item.description | default('ENLACE_TRONCAL') }}"
+          - switchport mode trunk
+          - "switchport trunk native vlan {{ item.native_vlan | default(1) }}"
+          - >-
+            switchport trunk allowed vlan add
+            {{ item.tagged_vlans | join(',') }}
+          - >-
+            {{ 'spanning-tree portfast'
+               if perfil.portfast else 'no spanning-tree portfast' }}
+          - >-
+            spanning-tree bpduguard
+            {{ 'enable' if perfil.bpdu_guard else 'disable' }}
+          - >-
+            {{ 'ip dhcp snooping trust'
+               if perfil.dhcp_trusted else 'no ip dhcp snooping trust' }}
+          - no shutdown
+          - exit
+          - end
+      loop: "{{ trunk_ports }}"
+      loop_control:
+        label: >-
+          {{ item.interface }} ->
+          perfil {{ item.profile }},
+          nativa {{ item.native_vlan | default(1) }},
+          etiquetadas {{ item.tagged_vlans | join(',') }}
+      vars:
+        perfil: "{{ trunk_profiles[item.profile] }}"
+
+    - name: Verificar puertos troncales
+      community.ciscosmb.command:
+        commands:
+          - "show interfaces switchport {{ item.interface }}"
+      loop: "{{ trunk_ports }}"
+      register: trunk_result
+      changed_when: false
+    - name: Mostrar verificación
+      ansible.builtin.debug:
+        var: trunk_result.results
+
+#    - name: Guardar configuración
+#      community.ciscosmb.command:
+#        commands:
+#          - write memory
+
+
+######  VARIABLES EN AWX  #######
+
+# trunk_ports:
+#   - interface: gi1
+#     description: ENLACE_SWITCH_CORE
+#     profile: hacia_switch
+#     tagged_vlans:
+#       - 57
+#       - 70
+
+#   - interface: gi2
+#     description: ACCESS_POINT_BLOQUE_A
+#     profile: hacia_ap
+#     native_vlan: 99  # Opcional; si se omite usa VLAN 1
+#     tagged_vlans:
+#       - 57
+#       - 70
+
+# En SF300 usar fa1, fa2, gi1, gi2, etc.
+# En CBS usar el nombre mostrado por "show interfaces configuration",
+# por ejemplo gi1/0/1 cuando corresponda.
