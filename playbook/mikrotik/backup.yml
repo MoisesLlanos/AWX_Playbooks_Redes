@@ -81,12 +81,18 @@
           ({{ exportacion.stdout[0] | length }} caracteres)
 
 
-# ============================================================
-# VARIABLES EN AWX
-# ============================================================
-#
-# No necesita ninguna. Opcional:
+######  VARIABLES EN AWX  #######
+
+# No necesita variables. Opcional:
 # backup_dir: /backups    # cambiar solo si se monta otra ruta
 #
-# Pendiente, decidido para despues: rotacion de backups antiguos.
-# Este playbook no borra nada, asi que la carpeta crece sin limite.
+# Datos clave:
+# - /backups es un bind mount del host dentro de los contenedores de AWX. Si no
+#   esta montado, el job falla al escribir.
+# - Deja <equipo>/<fecha>.rsc y <equipo>/ultimo.rsc. Es un /export de texto, sin
+#   contrasenas: por eso va en 0644, al contrario que el de Cisco.
+# - Un .rsc no es un backup binario: restaura configuracion, no el estado del
+#   equipo. Para eso hace falta /system backup save.
+# - Solo lectura en el equipo: se puede programar sin ventana de mantenimiento.
+# - Pendiente, decidido para despues: rotacion de backups antiguos. Este
+#   playbook no borra nada, asi que la carpeta crece sin limite.

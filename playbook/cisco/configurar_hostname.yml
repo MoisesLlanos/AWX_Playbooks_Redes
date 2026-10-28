@@ -75,7 +75,14 @@
 #          - write memory
 
 
-
 ######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # nuevo_hostname: SW-BLOQUE-A-01
+#
+# Datos clave:
+# - Un nombre por equipo: lanzarlo con Limite = un solo switch. Con varios
+#   hosts, todos acabarian con el mismo nombre.
+# - No cambia el nombre del host en el inventario de AWX, solo el del switch.
+# - Verifica el resultado con "show system" en una conexion nueva.
+# - "write memory" esta comentado: se pierde si el switch reinicia.

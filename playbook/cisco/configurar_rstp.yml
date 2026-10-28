@@ -41,4 +41,15 @@
 
 ######  VARIABLES EN AWX  #######
 
+
+######  VARIABLES EN AWX  #######
+
 # NO NECESITA VARIABLES
+#
+# Datos clave:
+# - Activa RSTP global en el switch y muestra "show spanning-tree".
+# - Lanzarlo despues de crear_vlans.yml y antes de los troncales, que es cuando
+#   aparecen los posibles bucles.
+# - Un cambio de protocolo de spanning-tree reconverge la topologia: puede
+#   cortar el trafico unos segundos.
+# - "write memory" esta comentado: se pierde si el switch reinicia.

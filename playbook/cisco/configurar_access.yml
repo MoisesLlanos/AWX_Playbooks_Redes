@@ -197,9 +197,9 @@
 #          - write memory
 
 
-
 ######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # access_ports:
 #   - interface: fa9
 #     description: PC_CONTABILIDAD
@@ -219,6 +219,19 @@
 #   - interface: fa12
 #     description: PUERTO_SIN_USO
 #     profile: desactivado
-
-# En CBS usar el nombre mostrado por "show interfaces configuration",
-# por ejemplo gi1/0/1 cuando corresponda.
+#
+# Datos clave:
+# - profile sale de vars/port_profiles.yml, que el playbook carga solo:
+#   usuario, impresora, camara, telefono, servidor y desactivado. No se pasa por
+#   AWX; para cambiar limites de MAC, storm control o seguridad se edita ese
+#   archivo.
+# - vlan_id es obligatorio salvo con el perfil desactivado. description es
+#   opcional.
+# - Las VLANs deben existir antes (crear_vlans.yml) y el troncal de subida ya
+#   configurado (configurar_trunks.yml).
+# - En SF300 usar fa1, fa2, gi1, gi2. En CBS usar el nombre que muestra
+#   "show interfaces configuration", por ejemplo gi1/0/1.
+# - Sube ansible_command_timeout a 120 s porque smartport y port security tardan
+#   en el SF300, y quema el primer canal SSH a proposito antes de configurar.
+# - No incluir el puerto por el que entra AWX.
+# - "write memory" esta comentado: lo aplicado se pierde si el switch reinicia.

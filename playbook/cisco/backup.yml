@@ -85,10 +85,17 @@
 
 ######  VARIABLES EN AWX  #######
 
-# No necesita ninguna. Opcionales:
+# No necesita variables. Opcionales:
 # backup_dir: /backups     # cambiar solo si se monta otra ruta
 # backup_no_log: false     # destapa la salida para depurar; deja la
 #                          # configuracion del switch en el log del job
 #
-# Pendiente, decidido para despues: rotacion de backups antiguos.
-# Este playbook no borra nada, asi que la carpeta crece sin limite.
+# Datos clave:
+# - /backups es un bind mount del host dentro de los contenedores de AWX. Si no
+#   esta montado, el job falla al escribir.
+# - Deja <equipo>/<fecha>.cfg y <equipo>/ultimo.cfg, en 0600 y con la carpeta en
+#   0700: el running-config de Cisco incluye hashes de contrasenas y la
+#   comunidad SNMP.
+# - Solo lectura en el switch: se puede programar sin ventana de mantenimiento.
+# - Pendiente, decidido para despues: rotacion de backups antiguos. Este
+#   playbook no borra nada, asi que la carpeta crece sin limite.

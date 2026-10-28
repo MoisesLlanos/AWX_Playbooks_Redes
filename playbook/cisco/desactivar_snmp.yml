@@ -108,8 +108,19 @@
 
 ######  VARIABLES EN AWX  #######
 
+# Obligatorias:
 # snmp_comunidad: la misma que creo configurar_snmp.yml
 # snmp_trap_destino: 192.168.1.10   # IP del panel
-
-# No apaga SNMP ni los traps globales: solo retira lo del panel.
-# Sin "write memory", el borrado no sobrevive a un reinicio del switch.
+#
+# Opcional para depurar:
+# snmp_no_log: false   # destapa la salida; deja la comunidad en el log del job
+#
+# Datos clave:
+# - Retira solo la huella del panel: su destino de traps y su comunidad. NO
+#   apaga SNMP ni los traps globales, porque otro servidor puede estar
+#   monitoreando el equipo.
+# - Quita el destino antes que la comunidad, que es el orden correcto; al
+#   revisar el final verifica con un assert que no quede ninguno de los dos.
+# - snmp_origen_permitido no se usa aqui.
+# - "write memory" esta comentado: sin guardar, el borrado no sobrevive a un
+#   reinicio del switch y la comunidad reaparece.

@@ -134,9 +134,25 @@
         'IP_CAMBIADA' in
         (resultado_ip.stdout | default(['']))[0].splitlines()
 
-# VARIABLES EN AWX (usar una IP distinta por equipo):
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias (una IP distinta por equipo):
 # bridge_name: BRtrunk
-# management_port: ether1
 # bridge_management:
 #   ipv4_address: 192.168.99.13/24
 #   vlan_id: 99
+#
+# Datos clave:
+# - CORTA LA SESION en curso: al mover la IP de administracion, la anterior deja
+#   de responder. Lanzarlo con Limite = un solo equipo y al final de la cadena,
+#   despues de bridge/VLANs, RSTP, troncales y accesos.
+# - La IP va directamente al bridge; no se crea una interfaz VLAN. La direccion
+#   va con mascara (/24), al estilo RouterOS.
+# - Marca su direccion con el comment AWX_BRIDGE_MANAGEMENT para reconocerla en
+#   ejecuciones siguientes. No borrar ese comentario a mano.
+# - Retira el bridge de la lista tagged de la VLAN de administracion antes de
+#   asignar la IP.
+# - Despues hay que actualizar la IP del host en el inventario de AWX.
+# - El puerto de administracion fisico (por ejemplo ether1) se queda fuera del
+#   bridge y no se toca: es la via de rescate.

@@ -73,7 +73,9 @@
 #          - write memory
 
 
+######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # vlans_config:
 #   - vlan_id: 57
 #     name: CICLISTAS
@@ -83,3 +85,13 @@
 
 #   - vlan_id: 99
 #     name: ADMINISTRACION
+#
+# Datos clave:
+# - vlan_id entre 2 y 4094 y name de 1 a 32 caracteres; si no, el playbook falla
+#   en el assert antes de tocar el switch.
+# - Idempotente: solo crea las VLANs que no aparecen en "show vlan". No borra
+#   ninguna ni asigna puertos; eso es configurar_trunks y configurar_access.
+# - Es el primer paso de un equipo nuevo: las VLANs tienen que existir antes de
+#   asignarlas a puertos troncales o de acceso.
+# - "write memory" esta comentado a proposito: lo creado se pierde si el switch
+#   reinicia antes de guardar.

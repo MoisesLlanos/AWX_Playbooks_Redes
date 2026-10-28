@@ -57,7 +57,15 @@
     #       - write memory
 
 
-
 ######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # gateway_ip: 192.168.1.1
+#
+# Datos clave:
+# - Es el "ip default-gateway" del switch, lo que le permite salir de su red de
+#   administracion (NTP, SNMP traps, AWX desde otra subred).
+# - El gateway tiene que estar en la misma red que la IP de administracion; si
+#   no, el equipo deja de responder desde fuera.
+# - Verifica con un assert que la IP aparezca en la configuracion.
+# - "write memory" esta comentado: se pierde si el switch reinicia.

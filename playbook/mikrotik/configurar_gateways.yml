@@ -51,7 +51,10 @@
       loop_control:
         label: '{{ item.item.name }}'
 
-# VARIABLES EN AWX:
+
+######  VARIABLES EN AWX  #######
+
+# Obligatoria:
 # gateways_config:
 #   - name: principal
 #     gateway: 192.168.99.1
@@ -63,3 +66,13 @@
 #     distance: 10
 #     check_gateway: ping
 #     enabled: true
+#
+# Datos clave:
+# - Son rutas 0.0.0.0/0 en /ip route. La de menor distance es la activa; la otra
+#   entra cuando la primera cae, y para eso hace falta check_gateway.
+# - name se guarda como comment de la ruta: es lo que identifica cada entrada,
+#   asi que cambiarlo crea una ruta nueva en vez de modificar la de antes.
+# - El gateway debe estar en una red que el equipo ya alcance; una ruta mal
+#   puesta puede dejar el MikroTik sin salida y a AWX sin camino de vuelta si
+#   entra desde otra subred.
+# - RouterOS persiste al momento.

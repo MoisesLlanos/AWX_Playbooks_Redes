@@ -216,3 +216,29 @@
     - name: Mostrar resultado
       ansible.builtin.debug:
         var: final.stdout_lines[0]
+
+
+######  VARIABLES EN AWX  #######
+
+# No necesita variables. Opcionales:
+# lote: 1                      # equipos en paralelo (serial); 1 = uno por uno
+# canal: stable                # canal de /system package update
+# permitir_salto_mayor: false  # true permite pasar de 6.x a 7.x
+# descarga_reintentos: 15      # intentos de comprobar la descarga
+# descarga_espera: 20          # segundos entre intentos (15 x 20 s = 5 min)
+#
+# Datos clave:
+# - REINICIA el equipo dos veces: una para aplicar RouterOS y otra para el
+#   firmware RouterBOARD. Ventana de mantenimiento obligatoria.
+# - El equipo necesita salida a internet y DNS: el firmware no esta en el
+#   repositorio, lo baja el propio MikroTik con /system package update download.
+#   Sin eso el job falla en la comprobacion de versiones, antes de descargar.
+# - Por defecto NO salta de version mayor (6.x -> 7.x), porque cambia la
+#   sintaxis de la configuracion. Para hacerlo, backup antes y equipo por
+#   equipo.
+# - Lanzar backup.yml antes, con el mismo Limite.
+# - Usa :execute para que la descarga corra en segundo plano y no salte el
+#   timeout de 30 s de network_cli.
+# - Este playbook NO declara connection en el play, a diferencia del resto de
+#   MikroTik: el inventario de AWX tiene que traer
+#   ansible_connection=ansible.netcommon.network_cli.

@@ -465,9 +465,11 @@
       loop_control:
         label: '{{ item.item.port }}'
 
-# VARIABLES EN AWX (ejemplo):
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
 # bridge_name: BRtrunk
-# management_port: ether1
 # access_ports_config:
 #   - port: ether2
 #     vlan_id: 10
@@ -475,3 +477,17 @@
 #   - port: ether3
 #     vlan_id: 20
 #     profile: impresora
+#
+# Datos clave:
+# - profile sale de vars/port_profiles.yml, que el playbook carga solo:
+#   usuario, impresora, camara, telefono o servidor. No se pasa por AWX; para
+#   cambiar storm control, portfast o dhcp-trusted se edita ese archivo.
+# - Es el ultimo paso de la cadena: bridge/VLANs, RSTP, troncales y accesos.
+#   La VLAN tiene que existir en la tabla del bridge.
+# - Un puerto nuevo se crea DESHABILITADO y solo se habilita al terminar su
+#   perfil y su VLAN.
+# - El storm control depende del modelo: el playbook consulta el modelo con
+#   community.routeros.facts y elige storm-rate, policer o lo omite sin fallar
+#   si el equipo no lo soporta. No hay nada que configurar en AWX para eso.
+# - No incluir el puerto por el que llega AWX.
+# - any_errors_fatal y serial: 1. RouterOS persiste al momento.

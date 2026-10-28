@@ -65,6 +65,25 @@
 # snmp_comunidad: valor-secreto-no-predeterminado
 # snmp_origen_permitido: 192.168.99.20/32
 #
-# VARIABLES OPCIONALES:
+
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
+# snmp_comunidad: valor-secreto-no-predeterminado
+# snmp_origen_permitido: 192.168.99.20/32   # IP del panel, CON mascara
+#
+# Opcionales:
 # snmp_contacto: soporte@empresa.example
 # snmp_ubicacion: Sucursal principal
+#
+# Datos clave:
+# - Crea la comunidad de solo lectura limitada al origen y habilita SNMP.
+# - RouterOS espera la mascara en el origen (/32); el lado Cisco la rechaza. No
+#   copiar el mismo valor entre fabricantes.
+# - La comunidad es un secreto: en variables extra de la plantilla queda en
+#   texto plano. Para mantenerla cifrada, usar un tipo de credencial
+#   personalizado que inyecte la variable. Las tareas que la tocan llevan
+#   no_log.
+# - Lanzarlo ANTES de configurar_snmp_traps.yml, que usa esa comunidad.
+# - RouterOS persiste al momento.

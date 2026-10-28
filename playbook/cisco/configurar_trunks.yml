@@ -95,6 +95,7 @@
 
 ######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # trunk_ports:
 #   - interface: gi1
 #     description: ENLACE_SWITCH_CORE
@@ -110,7 +111,15 @@
 #     tagged_vlans:
 #       - 57
 #       - 70
-
-# En SF300 usar fa1, fa2, gi1, gi2, etc.
-# En CBS usar el nombre mostrado por "show interfaces configuration",
-# por ejemplo gi1/0/1 cuando corresponda.
+#
+# Datos clave:
+# - profile sale de vars/trunk_profiles.yml, que el playbook carga solo:
+#   hacia_switch o hacia_ap. No se pasa por AWX; para cambiar BPDU guard u
+#   otros ajustes se edita ese archivo.
+# - La VLAN nativa no puede repetirse en tagged_vlans: el assert lo rechaza.
+# - Las VLANs deben existir antes (crear_vlans.yml).
+# - En SF300 usar fa1, fa2, gi1, gi2. En CBS usar el nombre que muestra
+#   "show interfaces configuration", por ejemplo gi1/0/1.
+# - Cuidado con el puerto de subida por el que llega AWX: dejarlo mal etiquetado
+#   deja el switch inalcanzable.
+# - "write memory" esta comentado: lo aplicado se pierde si el switch reinicia.

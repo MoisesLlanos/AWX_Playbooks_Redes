@@ -104,9 +104,21 @@
 
 ######  VARIABLES EN AWX  #######
 
+
+######  VARIABLES EN AWX  #######
+
 # No necesita variables. Opcionales:
 # guardar_antes: false   # true ejecuta "write memory" antes de reiniciar
 # espera_inicial: 60     # segundos antes de empezar a comprobar el puerto SSH
 # espera_maxima: 420     # segundos como maximo esperando a que vuelva
 #
-# Reinicia todo lo que coincida con el Limite de AWX.
+# Datos clave:
+# - Reinicia todo lo que coincida con el Limite de AWX, con serial: 1, de uno en
+#   uno. Un SF/SG puede tardar hasta 7 minutos en volver.
+# - guardar_antes=false (el valor por defecto) es una decision: lo que no este
+#   en startup-config SE PIERDE al reiniciar. Es la forma de deshacer cambios
+#   mal aplicados, pero tambien borra lo bueno que no se guardo.
+# - El job avisa en un debug con el "System Up Time" de antes y de despues. Esa
+#   comparacion NO falla el job si el equipo no reinicio de verdad.
+# - Programalo en ventana de mantenimiento y revisa la zona horaria del
+#   Calendario de AWX, que suele venir en UTC.

@@ -44,6 +44,15 @@
         fail_msg: "El nombre final no coincide con el solicitado."
 
 
-        ######  VARIABLES EN AWX  #######
+######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # host_name: SW-BLOQUE-A-01
+#
+# Datos clave:
+# - Un nombre por equipo: lanzarlo con Limite = un solo MikroTik. Con varios
+#   hosts, todos acabarian con el mismo nombre.
+# - Idempotente: solo escribe si /system identity no coincide, y verifica el
+#   resultado con un assert.
+# - No cambia el nombre del host en el inventario de AWX, solo el del equipo.
+# - RouterOS persiste al momento.

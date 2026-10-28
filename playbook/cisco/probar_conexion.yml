@@ -14,3 +14,17 @@
     - name: Mostrar resultado
       ansible.builtin.debug:
         var: resultado.stdout
+
+
+######  VARIABLES EN AWX  #######
+
+# NO NECESITA VARIABLES
+#
+# Datos clave:
+# - Solo lectura: ejecuta "show version" y no cambia nada en el switch.
+# - Es la primera plantilla que conviene lanzar con un equipo nuevo. Valida la
+#   credencial Machine, la conexion y que el inventario traiga
+#   ansible_network_os=community.ciscosmb.ciscosmb.
+# - Con el Limite vacio prueba todo el grupo EquiposCisco; con Limite = un
+#   equipo, solo ese.
+# - Si falla aqui, no tiene sentido lanzar ningun otro playbook de Cisco.

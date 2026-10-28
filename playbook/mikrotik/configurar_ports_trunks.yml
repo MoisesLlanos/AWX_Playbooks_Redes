@@ -151,9 +151,11 @@
       loop_control:
         label: '{{ item.item.port }}'
 
-# VARIABLES EN AWX (ejemplo):
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
 # bridge_name: BRtrunk
-# management_port: ether1
 # trunk_ports_config:
 #   - port: ether2
 #     profile: hacia_switch
@@ -165,3 +167,15 @@
 #     vlan_ids:
 #       - 10
 #       - 20
+#
+# Datos clave:
+# - profile sale de vars/trunk_profiles.yml, que el playbook carga solo:
+#   hacia_switch o hacia_ap. No se pasa por AWX; para cambiar BPDU guard,
+#   frame-types o ingress-filtering se edita ese archivo.
+# - El bridge y las VLANs deben existir antes (configurar_bridge_vlans.yml); las
+#   vlan_ids se anaden como tagged en la tabla del bridge.
+# - Un puerto nuevo se crea DESHABILITADO y solo se habilita al terminar su
+#   perfil y sus VLANs, para no abrir un puerto a medio configurar.
+# - No incluir el puerto por el que llega AWX si esta fuera del bridge: al
+#   meterlo con vlan-filtering activo, el equipo queda inalcanzable.
+# - any_errors_fatal y serial: 1. RouterOS persiste al momento.

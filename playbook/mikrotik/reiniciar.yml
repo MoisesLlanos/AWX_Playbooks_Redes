@@ -75,9 +75,22 @@
 # VARIABLES EN AWX
 # ============================================================
 #
+
+
+######  VARIABLES EN AWX  #######
+
 # No necesita variables. Opcionales:
 # espera_inicial: 30    # segundos antes de empezar a comprobar el puerto SSH
 # espera_maxima: 300    # segundos como maximo esperando a que vuelva
 #
-# Reinicia todo lo que coincida con el Limite de AWX. Con el Limite vacio,
-# son los 5 equipos del grupo EquiposMikrotik.
+# Datos clave:
+# - Reinicia todo lo que coincida con el Limite de AWX, con serial: 1, de uno en
+#   uno. Con el Limite vacio son todos los equipos de EquiposMikrotik.
+# - Un MikroTik suele tardar 2-4 minutos en volver.
+# - El job avisa en un debug con el uptime de antes y de despues. Esa
+#   comparacion NO falla el job si el equipo no reinicio de verdad.
+# - La espera inicial de 30 s es corta: si a los 30 s el equipo todavia no cerro
+#   el SSH, el wait_for da exito sin que el reinicio haya empezado. Subela si el
+#   equipo tarda en caer.
+# - Programalo en ventana de mantenimiento y revisa la zona horaria del
+#   Calendario de AWX, que suele venir en UTC.

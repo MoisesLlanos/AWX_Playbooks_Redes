@@ -28,6 +28,16 @@
         'RSTP_CAMBIADO' in
         (resultado_rstp.stdout | default(['']))[0].splitlines()
 
-# VARIABLES EN AWX (ejemplo):
+
+######  VARIABLES EN AWX  #######
+
+# Obligatoria:
 # bridge_name: BRtrunk
-# management_port: ether1
+#
+# Datos clave:
+# - Pone protocol-mode=rstp en el bridge y no toca nada mas. El bridge debe
+#   existir ya (configurar_bridge_vlans.yml).
+# - Idempotente: solo reporta "changed" si el modo no era rstp.
+# - Un cambio de protocol-mode reconverge la topologia: puede cortar el trafico
+#   unos segundos.
+# - Lanzarlo antes de los troncales, que es cuando pueden aparecer bucles.

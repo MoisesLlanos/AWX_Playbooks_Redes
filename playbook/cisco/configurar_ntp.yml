@@ -42,7 +42,15 @@
     #       - write memory
 
 
-
 ######  VARIABLES EN AWX  #######
 
+# Obligatoria:
 # ntp_server_ip: 192.168.99.10
+#
+# Datos clave:
+# - Configura el cliente SNTP y muestra "show sntp configuration" y
+#   "show clock detail".
+# - El switch necesita gateway (configurar_gateway.yml) si el servidor NTP esta
+#   en otra subred.
+# - La hora correcta es lo que hace utiles los logs y los traps SNMP.
+# - "write memory" esta comentado: se pierde si el switch reinicia.

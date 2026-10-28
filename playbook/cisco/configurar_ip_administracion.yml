@@ -70,8 +70,26 @@
 #          - write memory
 
 
-###### VARIABLES EN AWX ######
+######  VARIABLES EN AWX  #######
 
+# Obligatorias (una IP distinta por equipo):
 # management_vlan: 99
 # management_ip: 192.168.99.13
 # management_mask: 255.255.255.0
+#
+# Opcional:
+# management_ssh_port: 22   # por defecto toma ansible_port del inventario, o 22
+#
+# Datos clave:
+# - CORTA LA SESION en curso: el playbook aplica la IP, cierra la conexion
+#   (reset_connection), pasa a hablar con la IP nueva y espera a que responda el
+#   SSH, con un maximo de 120 s.
+# - Lanzarlo con Limite = un solo equipo y al final de la cadena, despues de
+#   VLANs, RSTP, troncales y accesos.
+# - La VLAN de administracion debe existir (crear_vlans.yml) y llegar al switch
+#   etiquetada por el troncal de subida, o el equipo queda inalcanzable.
+# - Despues hay que actualizar la IP del host en el inventario de AWX, porque la
+#   anterior ya no responde.
+# - "write memory" esta comentado: si el switch reinicia vuelve a la IP vieja,
+#   que es la red de seguridad si algo sale mal, pero tambien significa que un
+#   corte de luz deshace el cambio.

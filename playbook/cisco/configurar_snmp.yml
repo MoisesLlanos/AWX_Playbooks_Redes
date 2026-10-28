@@ -94,10 +94,23 @@
     #       - write memory
 
 
-
 ######  VARIABLES EN AWX  #######
 
-# snmp_comunidad: valor-secreto
-# snmp_origen_permitido: 192.168.99.20
-# snmp_contacto: soporte@empresa.example  # Opcional
-# snmp_ubicacion: Sucursal principal      # Opcional
+# Obligatorias:
+# snmp_comunidad: valor-secreto           # Maximo 20 caracteres por Cisco
+# snmp_origen_permitido: 192.168.99.20    # IP del panel, SIN /32
+#
+# Opcionales:
+# snmp_contacto: soporte@empresa.example
+# snmp_ubicacion: Sucursal principal
+#
+# Datos clave:
+# - Deja SNMPv2c de solo lectura, limitado al origen permitido.
+# - Cisco rechaza la mascara en el origen: va 192.168.99.20, no
+#   192.168.99.20/32 (eso es el formato del lado MikroTik).
+# - La comunidad es un secreto: en variables extra de la plantilla queda en
+#   texto plano. Para mantenerla cifrada, usar un tipo de credencial
+#   personalizado que inyecte la variable.
+# - Lanzarlo ANTES de configurar_snmp_traps.yml, que exige que la comunidad ya
+#   exista.
+# - "write memory" esta comentado: se pierde si el switch reinicia.

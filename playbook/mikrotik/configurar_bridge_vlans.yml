@@ -56,25 +56,35 @@
         (resultado_tabla.stdout | default(['']))[0].splitlines()
 
 
-# ============================================================
-# VARIABLES EN AWX
-# ============================================================
-#
-# bridge_name: bridge1
-# management_port: ether1
-#
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
+# bridge_name: BRtrunk
 # vlans_config:
 #   - vlan_id: 10
 #     vlan_name: USUARIOS
-#
+
 #   - vlan_id: 20
 #     vlan_name: IMPRESORAS
-#
+
 #   - vlan_id: 30
 #     vlan_name: CAMARAS
-#
+
 #   - vlan_id: 40
 #     vlan_name: TELEFONOS
-#
+
 #   - vlan_id: 50
 #     vlan_name: SERVIDORES
+#
+# Datos clave:
+# - Primer paso de un equipo nuevo: crea el bridge y llena la tabla VLAN. NO
+#   asigna puertos fisicos (eso es configurar_ports_trunks y
+#   configurar_ports_access) ni toca protocol-mode (eso es configurar_rstp).
+# - Crea el bridge con vlan-filtering=yes, o lo activa si ya existia. Con el
+#   filtrado puesto, un puerto que no este en la tabla VLAN deja de pasar
+#   trafico: el puerto de administracion debe quedar FUERA del bridge hasta
+#   terminar los puertos.
+# - vlan_name se guarda como comment de la entrada, solo para identificarla.
+# - Idempotente: no duplica entradas ni borra las que ya existan.
+# - any_errors_fatal y serial: 1, asi que un equipo que falle detiene el job
+#   antes de dejar media red a medias. RouterOS persiste al momento.

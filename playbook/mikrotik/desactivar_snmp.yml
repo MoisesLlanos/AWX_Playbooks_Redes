@@ -84,10 +84,9 @@
           el panel conserva acceso de lectura SNMP.
 
 
-# ============================================================
-# VARIABLES EN AWX
-# ============================================================
-#
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
 # snmp_comunidad: la misma que creo configurar_snmp.yml. Aqui solo se usa para
 #                 informar si sigue existiendo; este playbook NO la borra.
 # snmp_trap_destino: 192.168.1.10   # IP del panel
@@ -95,6 +94,11 @@
 # Opcional para depurar:
 # snmp_no_log: false   # destapa la salida; deja la comunidad en el log del job
 #
-# No apaga SNMP ni borra la comunidad: solo deja de enviar traps al panel.
-# trap-community se deja intacto porque en RouterOS es un valor global unico
-# y lo pueden estar usando otros servidores.
+# Datos clave:
+# - Solo deja de enviar traps al panel: retira el trap-target. NO apaga SNMP ni
+#   borra la comunidad, asi que el panel conserva el acceso de lectura y otro
+#   servidor puede seguir monitoreando el equipo.
+# - trap-community se deja intacto a proposito: en RouterOS es un valor global
+#   unico y lo pueden estar usando otros destinos.
+# - snmp_origen_permitido no se usa aqui.
+# - RouterOS persiste al momento: el cambio no se deshace al reiniciar.

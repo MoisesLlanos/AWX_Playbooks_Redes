@@ -84,8 +84,17 @@
     #       - write memory
 
 
-
 ######  VARIABLES EN AWX  #######
 
-# snmp_trap_destino: 192.168.1.10
-# snmp_comunidad: J9MBYrvCKdbqm7o_336Y
+# Obligatorias:
+# snmp_trap_destino: 192.168.1.10   # IP del panel
+# snmp_comunidad: la misma que creo configurar_snmp.yml
+#
+# Datos clave:
+# - Depende de configurar_snmp.yml: comprueba que la comunidad exista antes de
+#   anadir el destino de traps. Lanzarlos en ese orden, o usar el envoltorio
+#   playbook/snmp_activar.yml, que ya lo hace.
+# - Si la comunidad no coincide con la del panel, los traps llegan y se
+#   descartan.
+# - El switch necesita ruta hasta el panel (configurar_gateway.yml).
+# - "write memory" esta comentado: se pierde si el switch reinicia.

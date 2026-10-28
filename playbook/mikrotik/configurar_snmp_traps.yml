@@ -90,6 +90,23 @@
 # snmp_comunidad: debe coincidir con la comunidad creada por configurar_snmp.yml
 # Tambien se acepta el nombre anterior: snmp_trap_comunidad
 #
-# VARIABLES OPCIONALES:
+
+
+######  VARIABLES EN AWX  #######
+
+# Obligatorias:
+# snmp_trap_destino: 192.168.99.20
+# snmp_comunidad: debe coincidir con la comunidad creada por configurar_snmp.yml
+#                 Tambien se acepta el nombre anterior: snmp_trap_comunidad
+#
+# Opcionales:
 # snmp_trap_generators: interfaces,start-trap
 # snmp_trap_interfaces: all
+#
+# Datos clave:
+# - Depende de configurar_snmp.yml: la comunidad tiene que existir ya. Lanzarlos
+#   en ese orden, o usar el envoltorio playbook/snmp_activar.yml.
+# - En RouterOS trap-target y trap-community son valores GLOBALES y unicos: si
+#   otro servidor ya recibe traps de este equipo, esto lo reemplaza.
+# - El equipo necesita ruta hasta el panel (configurar_gateways.yml).
+# - RouterOS persiste al momento.

@@ -26,3 +26,20 @@
           El cliente NTP no quedo habilitado con el servidor
           192.168.88.10. Estado: {{ ntp_estado.stdout | join(' ') }}
         success_msg: Cliente NTP habilitado con 192.168.88.10.
+
+
+######  VARIABLES EN AWX  #######
+
+# NO ACEPTA VARIABLES, y eso es el dato clave de este playbook: el servidor NTP
+# esta fijo en el codigo (192.168.88.10), tanto en la tarea que lo configura
+# como en el assert que lo verifica. Para apuntar a otro servidor hay que editar
+# el playbook en los dos sitios; una variable extra en AWX no cambia nada.
+#
+# Datos clave:
+# - Sugerencia pendiente: parametrizarlo como el lado Cisco, que ya usa
+#   ntp_server_ip, y de paso dejar el mismo servidor en los dos fabricantes.
+# - La tarea de configuracion no lleva changed_when, asi que el job sale como
+#   "changed" en cada ejecucion aunque el cliente ya estuviera correcto.
+# - El equipo necesita ruta hasta el servidor NTP
+#   (configurar_gateways.yml) si esta en otra subred.
+# - RouterOS persiste al momento.
